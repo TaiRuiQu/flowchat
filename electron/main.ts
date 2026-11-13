@@ -1,0 +1,207 @@
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
+import path from 'node:path'
+import { promises as fs } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { spawn } from 'node:child_process'
+import { Controller } from './controller'
+import { Store } from './store'
+import { locate, safeError } from './harness'
+import type { Command, Engine } from '../shared/types'
+
+const directory = path.dirname(fileURLToPath(import.meta.url))
+let window: BrowserWindow | undefined,
+  controller: Controller,
+  closing = false,
+  preparingClose = false,
+  rendererReady = false
+const lock = app.requestSingleInstanceLock()
+if (!lock) app.quit()
+else {
+  app.on('second-instance', () => {
+    if (window?.isMinimized()) window.restore()
+    window?.show()
+    window?.focus()
+  })
+  app
+    .whenReady()
+    .then(async () => {
+      app.setAppUserModelId('com.flowchat.desktop')
+      const root = process.env.FLOWCHAT_DATA_DIR ?? path.join(app.getPath('userData'), 'workspace')
+      controller = new Controller(new Store(root), (event, value) => {
+        if (window && !window.isDestroyed()) window.webContents.send(`flowchat:${event}`, value)
+      })
+      // Loading is done by the renderer so data errors are recoverable inside the window.
+      let geometry = { width: 1440, height: 960, maximized: false }
+      try {
+        const settings = await controller.store.read<any>('settings.json', {})
+        geometry = {
+          width: Math.max(800, Math.min(2560, settings.windowWidth ?? 1440)),
+          height: Math.max(600, Math.min(1600, settings.windowHeight ?? 960)),
+          maximized: settings.maximized ?? false,
+        }
+      } catch {}
+      window = new BrowserWindow({
+        icon: path.join(directory, '../assets/flowchat.ico'),
+        width: geometry.width,
+        height: geometry.height,
+        minWidth: 420,
+        minHeight: 560,
+        title: 'FlowChat',
+        backgroundColor: nativeTheme.shouldUseDarkColors ? '#171717' : '#ffffff',
+        show: false,
+        titleBarStyle: 'hidden',
+        autoHideMenuBar: true,
+        webPreferences: {
+          preload: path.join(directory, 'preload.cjs'),
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+          spellcheck: false,
+        },
+      })
+      window.removeMenu()
+      const isTrusted = (event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent) => {
+        if (
+          event.sender !== window?.webContents ||
+          event.senderFrame !== window.webContents.mainFrame
+        )
+          throw new Error('无效的请求来源。')
+      }
+      ipcMain.handle('flowchat:command', async (event, command: Command) => {
+        isTrusted(event)
+        rendererReady = true
+        try {
+          const result = await controller.execute(command)
+          const theme = controller.settings.theme
+          nativeTheme.themeSource =
+            theme === 'System' ? 'system' : theme === 'Dark' ? 'dark' : 'light'
+          return result
+        } catch (e) {
+          throw new Error(safeError(e))
+        }
+      })
+      ipcMain.on('flowchat:window', (event, action: string) => {
+        isTrusted(event)
+        if (action === 'minimize') window?.minimize()
+        if (action === 'maximize') window?.isMaximized() ? window.unmaximize() : window?.maximize()
+        if (action === 'close') window?.close()
+      })
+      ipcMain.handle('flowchat:export', async (event, text: unknown, title: unknown) => {
+        isTrusted(event)
+        if (typeof text !== 'string' || text.length > 20_000_000 || typeof title !== 'string')
+          throw new Error('导出内容无效。')
+        const result = await dialog.showSaveDialog(window!, {
+          defaultPath: title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 100) + '.md',
+          filters: [{ name: 'Markdown', extensions: ['md'] }],
+        })
+        if (result.canceled || !result.filePath) return false
+        await fs.writeFile(result.filePath, text, 'utf8')
+        return true
+      })
+      ipcMain.handle('flowchat:open-data', async (event) => {
+        isTrusted(event)
+        await shell.openPath(root)
+      })
+      ipcMain.handle('flowchat:pick-executable', async (event) => {
+        isTrusted(event)
+        const result = await dialog.showOpenDialog(window!, {
+          properties: ['openFile'],
+          filters: [
+            { name: 'Executable', extensions: process.platform === 'win32' ? ['exe'] : ['*'] },
+          ],
+        })
+        return result.filePaths[0] ?? null
+      })
+      ipcMain.handle('flowchat:login', async (event, engine: Engine) => {
+        isTrusted(event)
+        if (!['Codex', 'ClaudeCode', 'OpenCode'].includes(engine)) throw new Error('未知工具。')
+        const executable = locate(engine, controller.settings)
+        if (!executable) throw new Error('未找到工具。')
+        const args =
+          engine === 'Codex'
+            ? ['login']
+            : engine === 'ClaudeCode'
+              ? ['auth', 'login']
+              : ['auth', 'login']
+        // Launch an intentional interactive console; no untrusted text is passed to a shell.
+        const child = spawn(executable, args, {
+          windowsHide: false,
+          detached: true,
+          stdio: 'ignore',
+          shell: false,
+        })
+        child.on('error', () => {})
+        child.unref()
+      })
+      window.webContents.setWindowOpenHandler(({ url }) => {
+        if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
+        return { action: 'deny' }
+      })
+      window.webContents.on('will-navigate', (event) => event.preventDefault())
+      window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) =>
+        callback(false),
+      )
+      window.once('ready-to-show', () => {
+        if (geometry.maximized) window?.maximize()
+        window?.show()
+      })
+      window.on('close', async (event) => {
+        if (closing) return
+        event.preventDefault()
+        if (preparingClose) return
+        preparingClose = true
+        try {
+          if (controller.busy) {
+            const result = await dialog.showMessageBox(window!, {
+              type: 'question',
+              message: '回答仍在生成，停止并退出？',
+              buttons: ['继续对话', '停止并退出'],
+              defaultId: 0,
+              cancelId: 0,
+            })
+            if (result.response !== 1) return
+          }
+          try {
+            if (rendererReady)
+              await new Promise<void>((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                  ipcMain.removeListener('flowchat:close-ready', ready)
+                  reject(new Error('等待界面保存草稿超时。'))
+                }, 5000)
+                const ready = (event: Electron.IpcMainEvent, error?: string) => {
+                  if (event.sender !== window?.webContents) return
+                  clearTimeout(timeout)
+                  ipcMain.removeListener('flowchat:close-ready', ready)
+                  error ? reject(new Error(error)) : resolve()
+                }
+                ipcMain.on('flowchat:close-ready', ready)
+                window!.webContents.send('flowchat:prepare-close')
+              })
+            const bounds = window!.getNormalBounds()
+            controller.settings.windowWidth = bounds.width
+            controller.settings.windowHeight = bounds.height
+            controller.settings.maximized = window!.isMaximized()
+            await controller.shutdown()
+            closing = true
+            window?.close()
+          } catch (e) {
+            await dialog.showMessageBox(window!, {
+              type: 'error',
+              message: '保存失败，窗口已保留',
+              detail: safeError(e),
+            })
+          }
+        } finally {
+          preparingClose = false
+        }
+      })
+      if (process.env.ELECTRON_RENDERER_URL && !app.isPackaged)
+        await window.loadURL(process.env.ELECTRON_RENDERER_URL)
+      else await window.loadFile(path.join(directory, '../dist/index.html'))
+    })
+    .catch((error) => {
+      dialog.showErrorBox('FlowChat 启动失败', safeError(error))
+      app.quit()
+    })
+  app.on('window-all-closed', () => app.quit())
+}

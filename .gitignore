@@ -1,0 +1,17 @@
+**/bin/
+**/obj/
+.vs/
+.tools/
+.artifacts/
+*.user
+*.log
+**/node_modules/
+dist/
+dist-electron/
+coverage/
+.impeccable/
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
