@@ -50,26 +50,35 @@ export class Store {
   }
   private async writeFile(name: string, value: unknown) {
     const file = this.file(name),
-      temp = `${file}.${id()}.tmp`
-    try {
-      const handle = await fs.open(temp, 'wx')
+      body = JSON.stringify(
+        name === 'settings.json' ? this.credentials(value, true) : value,
+        null,
+        2,
+      )
+    // Windows refuses to replace a file another process has open for a moment (indexer, antivirus,
+    // backup agent). Without a retry a draft or an answer is silently lost, so retry the whole
+    // transaction with a fresh temp file and a short backoff.
+    for (let attempt = 1; ; attempt++) {
+      const temp = `${file}.${id()}.tmp`
       try {
-        await handle.writeFile(
-          JSON.stringify(name === 'settings.json' ? this.credentials(value, true) : value, null, 2),
-          'utf8',
-        )
-        await handle.sync()
+        const handle = await fs.open(temp, 'wx')
+        try {
+          await handle.writeFile(body, 'utf8')
+          await handle.sync()
+        } finally {
+          await handle.close()
+        }
+        // The backup is best effort: losing it never justifies losing the write itself.
+        await fs.copyFile(file, file + '.bak').catch(() => {})
+        await fs.rename(temp, file)
+        return
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code ?? ''
+        if (attempt >= 5 || !['EPERM', 'EACCES', 'EBUSY', 'ENOENT'].includes(code)) throw error
+        await new Promise((resolve) => setTimeout(resolve, 20 * attempt))
       } finally {
-        await handle.close()
+        await fs.rm(temp, { force: true }).catch(() => {})
       }
-      try {
-        await fs.copyFile(file, file + '.bak')
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
-      }
-      await fs.rename(temp, file)
-    } finally {
-      await fs.rm(temp, { force: true })
     }
   }
   private enqueue<T>(work: () => Promise<T>): Promise<T> {

@@ -1,6 +1,6 @@
 import { _electron as electron } from 'playwright'
 import { createServer } from 'node:http'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import assert from 'node:assert/strict'
@@ -48,6 +48,32 @@ const server = createServer(async (req, res) => {
 })
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
 const baseUrl = `http://127.0.0.1:${server.address().port}/v1`
+const storedChats = async () => {
+  const directory = path.join(data, 'conversations')
+  const chats = []
+  let names = []
+  try {
+    names = await readdir(directory)
+  } catch {
+    return chats
+  }
+  for (const name of names.filter((name) => name.endsWith('.json'))) {
+    try {
+      chats.push(JSON.parse(await readFile(path.join(directory, name), 'utf8')))
+    } catch {}
+  }
+  return chats
+}
+const storedDrafts = async () =>
+  (await storedChats()).flatMap((chat) => chat.branches.map((branch) => branch.draft))
+const until = async (check, message, timeout = 10_000) => {
+  const deadline = Date.now() + timeout
+  while (Date.now() < deadline) {
+    if (await check()) return
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  throw new Error(message)
+}
 await writeFile(
   path.join(data, 'settings.json'),
   JSON.stringify({
@@ -308,6 +334,11 @@ try {
     .getByRole('complementary', { name: '主导航' })
     .getByRole('button', { name: '指令与记忆', exact: true })
     .click()
+  // Leaving the conversation must flush the dictated text to the store before anything archives it.
+  await until(
+    async () => (await storedDrafts()).includes('这是离线语音识别的结果'),
+    '语音草稿未在切换页面前写入磁盘',
+  )
   assert.equal(await page.locator('#instructions').inputValue(), '用户固定指令：解释要有条理。')
   assert.match(await page.locator('#memory').inputValue(), /用户正在学习物理/)
   await page.getByRole('button', { name: '新建文档', exact: true }).click()
@@ -363,6 +394,11 @@ try {
   await page.getByRole('switch', { name: '启用语音功能' }).click()
   await page.getByRole('button', { name: '保存语音配置', exact: true }).click()
   await page.locator('.history-item', { hasText: '物理学习与文件实践' }).click()
+  // Reopening the conversation must show the saved draft before the window closes.
+  await page.waitForFunction(
+    (text) => document.querySelector('#composer')?.value === text,
+    '这是离线语音识别的结果',
+  )
   assert.equal(await page.getByRole('button', { name: '语音输入', exact: true }).count(), 0)
   const records = (await readFile(protocol, 'utf8')).trim().split('\n').map(JSON.parse)
   const turns = records.filter((record) => record.method === 'turn/start')
@@ -394,10 +430,11 @@ try {
   assert.match(restoredState.memory.text, /用户正在学习物理/)
   assert.equal(restoredState.memory.path, path.join(data, 'memory/memory.md'))
   assert.ok(restoredState.memory.files.some((file) => file.name === 'projects/physics.md'))
+  assert.equal(restoredState.conversation.title, '物理学习与文件实践')
   assert.equal(
     restoredState.conversation.branches.find(
       (branch) => branch.id === restoredState.conversation.activeBranchId,
-    ).draft,
+    )?.draft,
     '这是离线语音识别的结果',
   )
   // The composer mounts before React's effect restores the saved draft.
@@ -437,6 +474,29 @@ try {
     ),
   )
   console.log(`Feature UI checks passed. Screenshots: ${root}`)
+} catch (error) {
+  // Data loss bugs are invisible in a stack trace; print the persisted state that caused the failure.
+  console.error(`Feature UI checks failed: ${error.message}`)
+  try {
+    const chats = await storedChats()
+    console.error(
+      'stored conversations:',
+      JSON.stringify(
+        chats.map((chat) => ({
+          id: chat.id,
+          title: chat.title,
+          archived: chat.archived,
+          activeBranchId: chat.activeBranchId,
+          drafts: chat.branches.map((branch) => [branch.id, branch.draft]),
+        })),
+        null,
+        2,
+      ),
+    )
+    const settings = JSON.parse(await readFile(path.join(data, 'settings.json'), 'utf8'))
+    console.error('lastConversationId:', settings.lastConversationId)
+  } catch {}
+  throw error
 } finally {
   await application?.close().catch(() => {})
   server.closeAllConnections()

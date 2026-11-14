@@ -127,6 +127,9 @@ export default function App() {
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null),
     stateRef = useRef(state),
     draftRef = useRef(draft),
+    draftOwner = useRef<{ conversationId: string; branchId: string } | null>(null),
+    draftStored = useRef(''),
+    draftEdited = useRef(false),
     catalogRequests = useRef(new Set<Engine>()),
     catalogPaths = useRef<Partial<Record<Engine, string | null>>>({})
   stateRef.current = state
@@ -139,6 +142,7 @@ export default function App() {
     state?.settings.speech.enabled ?? false,
     `${branchKey}/${page}`,
     (text) => {
+      draftEdited.current = true
       setDraft((current) => current + (current && !current.endsWith('\n') ? ' ' : '') + text)
       composer.current?.focus()
     },
@@ -219,26 +223,37 @@ export default function App() {
   useEffect(() => {
     if (branchKey && previousKey.current !== branchKey) {
       previousKey.current = branchKey
+      // Bind the composer text to the branch it belongs to. Late flushes must never write a draft
+      // that was typed for another branch, and must never overwrite a stored draft with nothing.
+      draftOwner.current =
+        state && branch ? { conversationId: state.conversation.id, branchId: branch.id } : null
+      draftStored.current = branch?.draft ?? ''
+      draftEdited.current = false
       setDraft(branch?.draft ?? '')
       setQuote(null)
       setSelection(null)
       followLatest.current = true
       setShowLatest(false)
     }
-  }, [branchKey, branch?.draft])
+  }, [branchKey, branch, state])
   const persistDraft = useCallback(async () => {
     if (draftTimer.current) clearTimeout(draftTimer.current)
-    const current = stateRef.current,
-      active = current?.conversation.branches.find(
-        (b) => b.id === current.conversation.activeBranchId,
-      )
-    if (current && active && draftRef.current !== active.draft)
-      await window.flowchat.command({
-        type: 'draft',
-        conversationId: current.conversation.id,
-        branchId: active.id,
-        text: draftRef.current,
-      })
+    draftTimer.current = null
+    const owner = draftOwner.current
+    if (!owner || !draftEdited.current) return
+    const text = draftRef.current
+    if (text === draftStored.current) {
+      draftEdited.current = false
+      return
+    }
+    await window.flowchat.command({
+      type: 'draft',
+      conversationId: owner.conversationId,
+      branchId: owner.branchId,
+      text,
+    })
+    draftStored.current = text
+    draftEdited.current = false
   }, [])
   useEffect(
     () =>
@@ -404,8 +419,11 @@ export default function App() {
         fork: quote ?? undefined,
       })
       if (result) {
+        // The controller clears the branch draft together with the question.
         setDraft('')
         draftRef.current = ''
+        draftStored.current = ''
+        draftEdited.current = false
         setQuote(null)
       }
     } finally {
@@ -953,7 +971,10 @@ export default function App() {
                               : '继续提问，让思路更进一步……'
                         }
                         value={draft}
-                        onChange={(e) => setDraft(e.target.value)}
+                        onChange={(e) => {
+                          draftEdited.current = true
+                          setDraft(e.target.value)
+                        }}
                         onKeyDown={(e) => {
                           if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
                           if (e.ctrlKey || e.metaKey) {
@@ -961,6 +982,7 @@ export default function App() {
                             const area = e.currentTarget,
                               start = area.selectionStart,
                               end = area.selectionEnd
+                            draftEdited.current = true
                             setDraft(draft.slice(0, start) + '\n' + draft.slice(end))
                             requestAnimationFrame(() => {
                               area.selectionStart = area.selectionEnd = start + 1
