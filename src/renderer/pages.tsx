@@ -21,6 +21,7 @@ import { Button } from './components/ui/button'
 import { Dialog, IconButton, Menu, Select, Switch } from './components/ui/primitives'
 import { Markdown } from './components/markdown'
 import { NoteEditor } from './components/note-editor'
+import { MarkdownEditor } from './components/markdown-editor'
 import { IntegrationSettings } from './components/integration-settings'
 import { HarnessIcon } from './components/harness-icon'
 import type { Command, Engine, Note, Snapshot } from '../../shared/types'
@@ -174,12 +175,13 @@ export function MemoryPage({ state, run }: { state: Snapshot; run: RunCommand })
         <label className="field-label" htmlFor="instructions">
           我的长期指令
         </label>
-        <textarea
+        <MarkdownEditor
           id="instructions"
-          className="field memory-editor"
+          label="我的长期指令"
+          className="memory-editor"
           disabled={state.busy}
           value={instructions}
-          onChange={(event) => setInstructions(event.target.value)}
+          onChange={setInstructions}
         />
         <div className="memory-footer">
           <span>由你编辑 · 模型只读</span>
@@ -247,12 +249,13 @@ export function MemoryPage({ state, run }: { state: Snapshot; run: RunCommand })
         <label className="field-label" htmlFor="memory">
           {state.memory.name === 'memory.md' ? '全局记忆索引' : '分类记忆文档'}
         </label>
-        <textarea
+        <MarkdownEditor
           id="memory"
-          className="field memory-editor"
+          label={state.memory.name === 'memory.md' ? '全局记忆索引' : '分类记忆文档'}
+          className="memory-editor"
           disabled={state.busy}
           value={memory}
-          onChange={(event) => setMemory(event.target.value)}
+          onChange={setMemory}
           placeholder="告诉模型「请记住……」，它会直接更新这份文档。"
         />
         <div className="memory-footer">

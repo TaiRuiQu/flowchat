@@ -92,6 +92,9 @@ jobs:
             .artifacts/feature-qa/**/result.json
             .artifacts/layout-qa/**/*.png
             .artifacts/layout-qa/**/measurements.json
+            .artifacts/markdown-editor-qa/**/*.png
+            .artifacts/font-qa/**/*.png
+            .artifacts/font-qa/**/report.json
           if-no-files-found: ignore
           include-hidden-files: true
           retention-days: 14

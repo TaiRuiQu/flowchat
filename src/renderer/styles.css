@@ -21,9 +21,23 @@
   font-display: swap;
 }
 @font-face {
+  font-family: 'Geist Sans';
+  src: url('./assets/fonts/Geist-Italic-Variable.woff2') format('woff2');
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
   font-family: 'Geist Mono';
   src: url('./assets/fonts/GeistMono-Variable.woff2') format('woff2');
   font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('./assets/fonts/GeistMono-Italic-Variable.woff2') format('woff2');
+  font-style: italic;
   font-weight: 100 900;
   font-display: swap;
 }
@@ -54,7 +68,8 @@
     'Microsoft YaHei UI', 'Segoe UI', sans-serif;
   color: var(--foreground);
   background: var(--background);
-  font-synthesis: none;
+  /* CJK has no italic face; allow slanting while keeping real weight faces. */
+  font-synthesis: style;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   color-scheme: light;
@@ -973,52 +988,52 @@ kbd {
   border-radius: 0;
   font-size: 14px;
 }
-.markdown .hljs-comment,
-.markdown .hljs-quote {
+:is(.markdown, .markdown-editor) .hljs-comment,
+:is(.markdown, .markdown-editor) .hljs-quote {
   color: var(--syntax-comment);
   font-style: italic;
 }
-.markdown .hljs-keyword,
-.markdown .hljs-selector-tag,
-.markdown .hljs-literal,
-.markdown .hljs-deletion {
+:is(.markdown, .markdown-editor) .hljs-keyword,
+:is(.markdown, .markdown-editor) .hljs-selector-tag,
+:is(.markdown, .markdown-editor) .hljs-literal,
+:is(.markdown, .markdown-editor) .hljs-deletion {
   color: var(--syntax-keyword);
 }
-.markdown .hljs-string,
-.markdown .hljs-regexp,
-.markdown .hljs-addition,
-.markdown .hljs-meta .hljs-string {
+:is(.markdown, .markdown-editor) .hljs-string,
+:is(.markdown, .markdown-editor) .hljs-regexp,
+:is(.markdown, .markdown-editor) .hljs-addition,
+:is(.markdown, .markdown-editor) .hljs-meta .hljs-string {
   color: var(--syntax-string);
 }
-.markdown .hljs-number,
-.markdown .hljs-symbol,
-.markdown .hljs-bullet,
-.markdown .hljs-attr,
-.markdown .hljs-attribute {
+:is(.markdown, .markdown-editor) .hljs-number,
+:is(.markdown, .markdown-editor) .hljs-symbol,
+:is(.markdown, .markdown-editor) .hljs-bullet,
+:is(.markdown, .markdown-editor) .hljs-attr,
+:is(.markdown, .markdown-editor) .hljs-attribute {
   color: var(--syntax-number);
 }
-.markdown .hljs-title,
-.markdown .hljs-section,
-.markdown .hljs-selector-id,
-.markdown .hljs-selector-class {
+:is(.markdown, .markdown-editor) .hljs-title,
+:is(.markdown, .markdown-editor) .hljs-section,
+:is(.markdown, .markdown-editor) .hljs-selector-id,
+:is(.markdown, .markdown-editor) .hljs-selector-class {
   color: var(--syntax-title);
 }
-.markdown .hljs-built_in,
-.markdown .hljs-type,
-.markdown .hljs-params,
-.markdown .hljs-variable,
-.markdown .hljs-template-variable {
+:is(.markdown, .markdown-editor) .hljs-built_in,
+:is(.markdown, .markdown-editor) .hljs-type,
+:is(.markdown, .markdown-editor) .hljs-params,
+:is(.markdown, .markdown-editor) .hljs-variable,
+:is(.markdown, .markdown-editor) .hljs-template-variable {
   color: var(--syntax-variable);
 }
-.markdown .hljs-meta,
-.markdown .hljs-tag,
-.markdown .hljs-name {
+:is(.markdown, .markdown-editor) .hljs-meta,
+:is(.markdown, .markdown-editor) .hljs-tag,
+:is(.markdown, .markdown-editor) .hljs-name {
   color: var(--syntax-meta);
 }
-.markdown .hljs-emphasis {
+:is(.markdown, .markdown-editor) .hljs-emphasis {
   font-style: italic;
 }
-.markdown .hljs-strong {
+:is(.markdown, .markdown-editor) .hljs-strong {
   font-weight: 700;
 }
 .table-scroll {
@@ -1496,11 +1511,10 @@ kbd {
   opacity: 0.5;
 }
 .memory-editor {
-  height: 230px;
+  height: 320px;
+  min-height: 230px;
   resize: vertical;
-  line-height: 2;
-  font-size: 14px;
-  padding: 17px;
+  overflow: hidden;
 }
 .memory-footer {
   display: flex;
@@ -2211,21 +2225,9 @@ kbd {
   color: var(--subtle);
   font-size: 12px;
 }
-.note-writing-area {
-  display: block;
+.note-markdown-editor {
   flex: 1;
   min-height: 0;
-  width: 100%;
-  border: 0;
-  resize: none;
-  padding: 24px 32px 32px;
-  background: transparent;
-  color: var(--foreground);
-  font-size: 15px;
-  line-height: 1.9;
-}
-.note-writing-area::placeholder {
-  color: var(--subtle);
 }
 .note-document-preview {
   flex: 1;
@@ -2490,7 +2492,6 @@ kbd {
   .note-document-toolbar {
     padding: 0 20px 12px;
   }
-  .note-writing-area,
   .note-document-preview {
     padding: 20px;
   }

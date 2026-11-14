@@ -7,6 +7,7 @@ import type { RunCommand } from '../pages'
 import { Button } from './ui/button'
 import { Dialog, Select } from './ui/primitives'
 import { Markdown } from './markdown'
+import { MarkdownEditor, type MarkdownEditorHandle } from './markdown-editor'
 import { registerCloseParticipant } from '../lib/prepare-close'
 
 export function NoteEditor({
@@ -38,7 +39,7 @@ export function NoteEditor({
   const [confirmClose, setConfirmClose] = useState(false)
   const saveOperation = useRef<Promise<void> | null>(null)
   const form = useRef<HTMLFormElement>(null),
-    writer = useRef<HTMLTextAreaElement>(null),
+    writer = useRef<MarkdownEditorHandle>(null),
     request = useRef<HTMLTextAreaElement>(null)
   const dirty = title !== (note.title ?? '') || text !== (note.text ?? '')
   const canSave = !saving && (!!note.id ? dirty : !!(title.trim() || text.trim() || note.quote))
@@ -257,16 +258,16 @@ export function NoteEditor({
               <div role="group" aria-label="笔记显示方式">
                 <button type="button" aria-pressed={!preview} onClick={() => setPreview(false)}>
                   <Pencil size={13} />
-                  写作
+                  即时渲染
                 </button>
                 <button type="button" aria-pressed={preview} onClick={() => setPreview(true)}>
                   <BookOpen size={13} />
                   预览
                 </button>
               </div>
-              <span>Markdown</span>
+              <span>GFM · 数学公式</span>
             </div>
-            {preview ? (
+            {preview && (
               <div className="note-document-preview">
                 {text.trim() ? (
                   <Markdown>{text}</Markdown>
@@ -274,23 +275,23 @@ export function NoteEditor({
                   <p>写下你的想法后，可以在这里预览。</p>
                 )}
               </div>
-            ) : (
-              <textarea
-                id="note-text"
-                ref={writer}
-                className="note-writing-area"
-                readOnly={saving}
-                aria-label="笔记正文"
-                autoFocus
-                value={text}
-                onChange={(event) => setText(event.target.value)}
-                placeholder={
-                  note.quote
-                    ? '这段话让你想到了什么？\n\n写下你的理解，也可以和模型一起完善。'
-                    : '从一个想法开始……\n\n这里是你的写作空间。'
-                }
-              />
             )}
+            <MarkdownEditor
+              id="note-text"
+              ref={writer}
+              className="note-markdown-editor"
+              disabled={saving}
+              hidden={preview}
+              label="笔记正文"
+              autoFocus
+              value={text}
+              onChange={setText}
+              placeholder={
+                note.quote
+                  ? '这段话让你想到了什么？\n\n写下你的理解，也可以和模型一起完善。'
+                  : '从一个想法开始……\n\n这里是你的写作空间。'
+              }
+            />
           </section>
           <aside className="note-collaboration" aria-label="模型协作">
             <div className="note-collaboration-heading">

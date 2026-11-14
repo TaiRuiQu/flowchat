@@ -4,6 +4,7 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import assert from 'node:assert/strict'
+import { fillMarkdown, readMarkdown } from './markdown-editor-helpers.mjs'
 
 const root = path.resolve('.artifacts/feature-qa', randomUUID())
 const data = path.join(root, 'data'),
@@ -189,7 +190,7 @@ try {
     .getByRole('complementary', { name: '主导航' })
     .getByRole('button', { name: '指令与记忆', exact: true })
     .click()
-  await page.locator('#instructions').fill('用户固定指令：解释要有条理。')
+  await fillMarkdown(page, 'instructions', '用户固定指令：解释要有条理。')
   await page.getByRole('button', { name: '保存指令', exact: true }).click()
   await page.getByText('用户指令已更新', { exact: true }).waitFor()
   await page.getByRole('button', { name: '开启新对话', exact: true }).click()
@@ -294,13 +295,13 @@ try {
   await page.getByRole('toolbar').getByRole('button', { name: '记笔记', exact: true }).click()
   assert.match(await page.locator('.note-source').textContent(), /物理研究物质和运动/)
   await page.locator('#note-title').fill('我对物理的理解')
-  await page.locator('#note-text').fill('我的观点：先建立直觉。')
+  await fillMarkdown(page, 'note-text', '我的观点：先建立直觉。')
   await page.locator('#note-instruction').fill('保留我的观点，补充例子')
   await page.getByRole('button', { name: '生成修改建议', exact: true }).click()
   await page.getByRole('button', { name: '采纳到笔记', exact: true }).waitFor()
-  assert.equal(await page.locator('#note-text').inputValue(), '我的观点：先建立直觉。')
+  assert.equal(await readMarkdown(page, 'note-text'), '我的观点：先建立直觉。')
   await page.getByRole('button', { name: '采纳到笔记', exact: true }).click()
-  assert.match(await page.locator('#note-text').inputValue(), /共同编辑/)
+  assert.match(await readMarkdown(page, 'note-text'), /共同编辑/)
   await page.locator('.note-editor-scroll').evaluate((element) => {
     element.scrollTop = 0
   })
@@ -339,17 +340,17 @@ try {
     async () => (await storedDrafts()).includes('这是离线语音识别的结果'),
     '语音草稿未在切换页面前写入磁盘',
   )
-  assert.equal(await page.locator('#instructions').inputValue(), '用户固定指令：解释要有条理。')
-  assert.match(await page.locator('#memory').inputValue(), /用户正在学习物理/)
+  assert.equal(await readMarkdown(page, 'instructions'), '用户固定指令：解释要有条理。')
+  assert.match(await readMarkdown(page, 'memory'), /用户正在学习物理/)
   await page.getByRole('button', { name: '新建文档', exact: true }).click()
   await page.locator('#memory-file-name').fill('projects/physics.md')
   await page.getByRole('button', { name: '创建文档', exact: true }).click()
   await page.getByRole('dialog').waitFor({ state: 'hidden' })
-  await page.locator('#memory').fill('# 物理学习\n\n这是一份按主题整理的全局记忆。')
+  await fillMarkdown(page, 'memory', '# 物理学习\n\n这是一份按主题整理的全局记忆。')
   await page.getByRole('combobox', { name: '选择记忆文档' }).click()
   await page.getByRole('option', { name: 'memory.md · 索引', exact: true }).click()
   await page.waitForFunction(() =>
-    document.querySelector('#memory').value.includes('用户正在学习物理'),
+    document.querySelector('#memory')?.textContent.includes('用户正在学习物理'),
   )
   assert.match(
     await readFile(path.join(data, 'memory/projects/physics.md'), 'utf8'),
@@ -358,14 +359,14 @@ try {
   await page.getByRole('combobox', { name: '选择记忆文档' }).click()
   await page.getByRole('option', { name: 'projects/physics.md', exact: true }).click()
   await page.waitForFunction(() =>
-    document.querySelector('#memory').value.includes('按主题整理的全局记忆'),
+    document.querySelector('#memory')?.textContent.includes('按主题整理的全局记忆'),
   )
   await page.locator('#memory').scrollIntoViewIfNeeded()
   await page.screenshot({ path: path.join(root, '03-categorized-memory.png') })
   await page.getByRole('combobox', { name: '选择记忆文档' }).click()
   await page.getByRole('option', { name: 'memory.md · 索引', exact: true }).click()
   await page.waitForFunction(() =>
-    document.querySelector('#memory').value.includes('用户正在学习物理'),
+    document.querySelector('#memory')?.textContent.includes('用户正在学习物理'),
   )
   await page.waitForFunction(
     () => getComputedStyle(document.querySelector('.utility-scroll')).opacity === '1',

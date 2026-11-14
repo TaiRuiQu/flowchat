@@ -4,6 +4,7 @@ import { mkdir, writeFile, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { fillMarkdown } from './markdown-editor-helpers.mjs'
 
 const root = path.resolve('.artifacts/electron-qa', randomUUID())
 await mkdir(root, { recursive: true })
@@ -61,14 +62,16 @@ try {
   await page.getByRole('button', { name: '我的笔记', exact: true }).click()
   await page.getByRole('button', { name: '新建笔记', exact: true }).click()
   await page.locator('#note-title').fill('阅读与思考')
-  await page
-    .locator('#note-text')
-    .fill('## 我的第一篇笔记\n\n- 理解概念\n- 连接知识\n\n**保持好奇。**')
+  await fillMarkdown(
+    page,
+    'note-text',
+    '## 我的第一篇笔记\n\n- 理解概念\n- 连接知识\n\n**保持好奇。**',
+  )
   await page.getByRole('button', { name: '保存笔记', exact: true }).click()
   await page.getByRole('heading', { name: '阅读与思考', exact: true }).waitFor()
   await page.screenshot({ path: path.join(root, '02-notes.png') })
   await page.getByRole('button', { name: '指令与记忆', exact: true }).click()
-  await page.locator('#instructions').fill('请用直观的中文解释，并给出一个实际例子。')
+  await fillMarkdown(page, 'instructions', '请用直观的中文解释，并给出一个实际例子。')
   await page.getByRole('button', { name: '保存指令', exact: true }).click()
   await page.getByRole('switch', { name: '启用用户指令' }).click()
   await page.getByRole('switch', { name: '启用用户指令' }).waitFor()
@@ -127,7 +130,7 @@ try {
   await page.evaluate(() => window.flowchat.window('close'))
   await application.close()
   const settings = JSON.parse(await readFile(path.join(root, 'data/settings.json'), 'utf8'))
-  assert.equal(settings.instructions, '请用直观的中文解释，并给出一个实际例子。')
+  assert.equal(settings.instructions.trimEnd(), '请用直观的中文解释，并给出一个实际例子。')
   assert.equal(settings.instructionsEnabled, false)
   assert.equal(settings.memoryEnabled, true)
   assert.equal(settings.sidebarWidth, 310)

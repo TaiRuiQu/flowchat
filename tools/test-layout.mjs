@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import assert from 'node:assert/strict'
+import { fillMarkdown, readMarkdown } from './markdown-editor-helpers.mjs'
 
 const reportOnly = process.argv.includes('--report-only')
 const root = path.resolve('.artifacts/layout-qa', randomUUID())
@@ -349,7 +350,7 @@ try {
     await shot(`${label}-note-editor`)
     await page.getByRole('button', { name: '预览', exact: true }).click()
     await shot(`${label}-note-preview`)
-    await page.getByRole('button', { name: '写作', exact: true }).click()
+    await page.getByRole('button', { name: '即时渲染', exact: true }).click()
     if (width <= 760) await page.getByRole('tab', { name: '一起编辑' }).click()
     await page.getByRole('combobox', { name: '笔记协作工具' }).click()
     await page.getByRole('listbox').waitFor()
@@ -375,7 +376,7 @@ try {
     await page.getByRole('button', { name: '采纳到笔记' }).waitFor()
     await shot(`${label}-note-suggestion`)
     if (width <= 760) await page.getByRole('tab', { name: '笔记', exact: true }).click()
-    await page.locator('#note-text').fill('这段新写下的想法还没有保存。')
+    await fillMarkdown(page, 'note-text', '这段新写下的想法还没有保存。')
     if (width <= 760) await page.getByRole('tab', { name: '一起编辑' }).click()
     await page.getByRole('button', { name: '基于最新正文重写', exact: true }).waitFor()
     assert.equal(await page.getByRole('button', { name: '采纳到笔记', exact: true }).count(), 0)
@@ -387,7 +388,7 @@ try {
     await page.getByRole('button', { name: '关闭弹窗' }).click()
     await page.getByRole('heading', { name: '保存对笔记的修改？' }).waitFor()
     await page.getByRole('button', { name: '继续编辑', exact: true }).click()
-    assert.equal(await page.locator('#note-text').inputValue(), '这段新写下的想法还没有保存。')
+    assert.equal(await readMarkdown(page, 'note-text'), '这段新写下的想法还没有保存。')
     await page.keyboard.press('Control+n')
     assert.equal(await page.getByRole('dialog').count(), 1)
     await page.getByRole('button', { name: '关闭弹窗' }).click()
@@ -395,7 +396,7 @@ try {
   }
   await page.locator('.note-body').first().click()
   await page.getByRole('dialog').waitFor()
-  await page.locator('#note-text').fill('等待模型时写下的内容，也必须能够保存。')
+  await fillMarkdown(page, 'note-text', '等待模型时写下的内容，也必须能够保存。')
   await page.getByRole('tab', { name: '一起编辑' }).click()
   await page.locator('#note-instruction').fill('测试等待协作')
   await page.getByRole('button', { name: '生成修改建议' }).click()
@@ -405,7 +406,7 @@ try {
   await page.getByRole('button', { name: '保存笔记', exact: true }).click()
   await page.getByRole('dialog').waitFor({ state: 'hidden' })
   assert.equal(
-    JSON.parse(await readFile(path.join(data, 'notes.json'), 'utf8'))[0].text,
+    JSON.parse(await readFile(path.join(data, 'notes.json'), 'utf8'))[0].text.trimEnd(),
     '等待模型时写下的内容，也必须能够保存。',
   )
   await resize(1440, 960)
@@ -426,12 +427,12 @@ try {
   await page.locator('.note-body').first().click()
   await page.getByRole('dialog').waitFor()
   await shot('dark-note-editor')
-  await page.locator('#note-text').fill('关闭整个窗口前刚写下的笔记，重启后应当恢复。')
+  await fillMarkdown(page, 'note-text', '关闭整个窗口前刚写下的笔记，重启后应当恢复。')
   const closed = app.waitForEvent('close', { timeout: 15_000 })
   await page.evaluate(() => window.flowchat.window('close'))
   await closed
   assert.equal(
-    JSON.parse(await readFile(path.join(data, 'notes.json'), 'utf8'))[0].text,
+    JSON.parse(await readFile(path.join(data, 'notes.json'), 'utf8'))[0].text.trimEnd(),
     '关闭整个窗口前刚写下的笔记，重启后应当恢复。',
   )
   app = await electron.launch({
@@ -443,12 +444,12 @@ try {
   reopened.on('pageerror', (error) => errors.push(error.message))
   await reopened.locator('#composer').waitFor()
   const restored = await reopened.evaluate(() => window.flowchat.command({ type: 'bootstrap' }))
-  assert.equal(restored.notes[0].text, '关闭整个窗口前刚写下的笔记，重启后应当恢复。')
+  assert.equal(restored.notes[0].text.trimEnd(), '关闭整个窗口前刚写下的笔记，重启后应当恢复。')
   await reopened.getByRole('button', { name: '我的笔记', exact: true }).click()
   await reopened.locator('.note-body').first().click()
   await reopened.getByRole('dialog').waitFor()
   assert.equal(
-    await reopened.locator('#note-text').inputValue(),
+    await readMarkdown(reopened, 'note-text'),
     '关闭整个窗口前刚写下的笔记，重启后应当恢复。',
   )
   await reopened.evaluate(() => document.fonts.ready)

@@ -2,6 +2,7 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'node:path'
+import { vditorAssets } from './tools/vditor-assets'
 
 export default defineConfig({
   main: {
@@ -22,9 +23,10 @@ export default defineConfig({
   renderer: {
     root: 'src/renderer',
     resolve: { alias: { '@': resolve('src/renderer') } },
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), vditorAssets()],
     build: {
       minify: 'esbuild',
+      assetsInlineLimit: 0,
       cssMinify: true,
       outDir: resolve('dist'),
       rollupOptions: {
