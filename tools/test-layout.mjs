@@ -353,6 +353,10 @@ try {
     if (width <= 760) await page.getByRole('tab', { name: '一起编辑' }).click()
     await page.getByRole('combobox', { name: '笔记协作工具' }).click()
     await page.getByRole('listbox').waitFor()
+    // Radix mounts the listbox offscreen while Popper calculates its placement.
+    // Wait for an option to be stable and receive pointer events before testing the overlay.
+    if (!reportOnly)
+      await page.getByRole('listbox').getByRole('option').first().click({ trial: true })
     const pickerAboveOverlay = await page.getByRole('listbox').evaluate((element) => {
       const bounds = element.getBoundingClientRect()
       return element.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + 12))
