@@ -394,6 +394,16 @@ try {
   assert.match(restoredState.memory.text, /用户正在学习物理/)
   assert.equal(restoredState.memory.path, path.join(data, 'memory/memory.md'))
   assert.ok(restoredState.memory.files.some((file) => file.name === 'projects/physics.md'))
+  assert.equal(
+    restoredState.conversation.branches.find(
+      (branch) => branch.id === restoredState.conversation.activeBranchId,
+    ).draft,
+    '这是离线语音识别的结果',
+  )
+  // The composer mounts before React's effect restores the saved draft.
+  await restarted.waitForFunction(
+    () => document.querySelector('#composer')?.value === '这是离线语音识别的结果',
+  )
   assert.equal(await restarted.locator('#composer').inputValue(), '这是离线语音识别的结果')
   assert.deepEqual(errors, [])
   await writeFile(

@@ -3,6 +3,7 @@ import path from 'node:path'
 import { promises as fs } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { Controller } from './controller'
 import { Store } from './store'
 import { locate, safeError } from './harness'
@@ -11,6 +12,7 @@ import { synthesize, transcribe } from './compatible-api'
 import { resolveWorkspace } from './workspace'
 
 const directory = path.dirname(fileURLToPath(import.meta.url))
+const appId = 'com.flowchat.desktop'
 let window: BrowserWindow | undefined,
   controller: Controller,
   closing = false,
@@ -27,7 +29,21 @@ else {
   app
     .whenReady()
     .then(async () => {
-      app.setAppUserModelId('com.flowchat.desktop')
+      app.setAppUserModelId(appId)
+      let icon = path.join(
+        app.getAppPath(),
+        'assets',
+        process.platform === 'win32' ? 'flowchat.ico' : 'flowchat.png',
+      )
+      if (process.platform === 'win32') {
+        const bytes = await fs.readFile(icon)
+        const hash = createHash('sha256').update(bytes).digest('hex').slice(0, 16)
+        // Explorer cannot read inside app.asar. A new path also avoids stale shell icon caches.
+        const icons = path.join(app.getPath('userData'), 'icons')
+        await fs.mkdir(icons, { recursive: true })
+        icon = path.join(icons, `flowchat-${hash}.ico`)
+        await fs.writeFile(icon, bytes)
+      }
       const root = process.env.FLOWCHAT_DATA_DIR ?? path.join(app.getPath('userData'), 'workspace')
       controller = new Controller(
         new Store(root, {
@@ -53,7 +69,7 @@ else {
         }
       } catch {}
       window = new BrowserWindow({
-        icon: path.join(directory, '../assets/flowchat.png'),
+        icon,
         width: geometry.width,
         height: geometry.height,
         minWidth: 420,
@@ -71,6 +87,15 @@ else {
           spellcheck: false,
         },
       })
+      if (process.platform === 'win32')
+        window.setAppDetails({
+          appId,
+          appIconPath: icon,
+          relaunchCommand: app.isPackaged
+            ? `"${process.execPath}"`
+            : `"${process.execPath}" "${app.getAppPath()}"`,
+          relaunchDisplayName: 'FlowChat',
+        })
       window.removeMenu()
       const isTrusted = (event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent) => {
         if (

@@ -1,7 +1,7 @@
 import { _electron as electron } from 'playwright'
 import path from 'node:path'
-import { mkdir } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
+import { mkdir, readFile } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
 import assert from 'node:assert/strict'
 
 const root = path.resolve('.artifacts/electron-qa', `packaged-${randomUUID()}`)
@@ -30,6 +30,11 @@ try {
   )
   const version = await app.evaluate(() => process.versions.electron)
   assert.equal(version, '45.3.1')
+  const userData = await app.evaluate(({ app }) => app.getPath('userData'))
+  const icon = await readFile('assets/flowchat.ico')
+  const iconHash = createHash('sha256').update(icon).digest('hex').slice(0, 16)
+  // The Windows shell needs a real ICO outside app.asar, refreshed when the artwork changes.
+  assert.deepEqual(await readFile(path.join(userData, 'icons', `flowchat-${iconHash}.ico`)), icon)
   assert.equal(await page.evaluate(() => typeof window.require), 'undefined')
   const state = await page.evaluate(() => window.flowchat.command({ type: 'bootstrap' }))
   assert.equal(state.settings.version, 2)
