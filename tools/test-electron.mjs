@@ -1,4 +1,5 @@
 import { _electron as electron } from 'playwright'
+import { expect } from 'playwright/test'
 import { mkdir, writeFile, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import assert from 'node:assert/strict'
@@ -141,7 +142,7 @@ try {
   try {
     const reopened = await restart.firstWindow()
     await reopened.locator('#composer').waitFor()
-    assert.equal(await reopened.locator('#composer').inputValue(), '退出瞬间也会保存的草稿')
+    await expect(reopened.locator('#composer')).toHaveValue('退出瞬间也会保存的草稿')
     await reopened.getByRole('button', { name: '展开导航', exact: true }).click()
     await reopened.waitForFunction(
       () => document.querySelector('.sidebar').getBoundingClientRect().width === 310,
@@ -228,6 +229,7 @@ $$
     await modelPicker.click()
     assert.equal(await view.getByRole('option', { name: '默认模型', exact: true }).count(), 0)
     await view.getByRole('option', { name: '快速模型', exact: true }).click()
+    await expect(modelPicker).toHaveText('快速模型')
     const assertControlHasNoOutline = async (control) => {
       await view.mouse.move(1300, 100)
       await view.waitForFunction(
@@ -245,7 +247,7 @@ $$
     assert.equal(await view.getByRole('combobox', { name: /^推理强度：/ }).count(), 0)
     await modelPicker.click()
     await view.getByRole('option', { name: '离线模型', exact: true }).click()
-    assert.match(await modelPicker.textContent(), /离线模型/)
+    await expect(modelPicker).toHaveText('离线模型')
     assert.equal(await view.getByRole('slider', { name: '推理强度' }).count(), 0)
     const reasoningTrigger = view.locator('.reasoning-trigger')
     for (const label of ['低', '中', '高', '超高', '最高']) {
@@ -274,16 +276,14 @@ $$
     )
     await claudePicker.click()
     await view.getByRole('option', { name: 'Sonnet', exact: true }).click()
+    await expect(claudePicker).toHaveText('Sonnet')
     await enginePicker.click()
     await view.getByRole('option', { name: 'ChatGPT', exact: true }).click()
-    assert.match(await modelPicker.textContent(), /离线模型/)
-    assert.equal(
-      await view.getByRole('combobox', { name: '推理强度：最高', exact: true }).count(),
-      1,
-    )
+    await expect(modelPicker).toHaveText('离线模型')
+    await expect(view.getByRole('combobox', { name: '推理强度：最高', exact: true })).toHaveCount(1)
     await enginePicker.click()
     await view.getByRole('option', { name: 'Claude', exact: true }).click()
-    assert.match(await claudePicker.textContent(), /Sonnet/)
+    await expect(claudePicker).toHaveText('Sonnet')
     await enginePicker.click()
     await view.getByRole('option', { name: 'ChatGPT', exact: true }).click()
     await reasoningTrigger.click()
