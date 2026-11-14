@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import {
+  Archive,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
   ArrowUp,
   ArrowUpRight,
   BookOpen,
-  Bookmark,
   CalendarDays,
   CircleHelp,
   Copy,
   CornerDownLeft,
   Download,
   GitBranch,
+  Mic,
+  Volume2,
   Lightbulb,
   Loader2,
   MessageCircle,
@@ -35,9 +37,14 @@ import { Button } from './components/ui/button'
 import { ContextMenu, Dialog, IconButton, Select } from './components/ui/primitives'
 import { Markdown } from './components/markdown'
 import { ReasoningControl } from './components/reasoning-control'
+import { SourceSelect } from './components/source-select'
+import { WorkspaceSelect } from './components/workspace-select'
+import { NoteEditor } from './components/note-editor'
+import { useSpeech } from './lib/use-speech'
+import { prepareWindowClose } from './lib/prepare-close'
 import { MemoryPage, NotesPage, SettingsPage } from './pages'
 import { cn } from './lib/utils'
-import type { Branch, Catalog, Command, Engine, Note, Snapshot, Turn } from '../../shared/types'
+import type { Branch, Catalog, Command, Engine, Note, Snapshot } from '../../shared/types'
 import { engineNames, modelFor, modelSettingKeys } from '../../shared/types'
 import { availableModels, reasoningFor, reasoningKey } from '../../shared/models'
 
@@ -48,14 +55,15 @@ function Logo({ small = false }: { small?: boolean }) {
     <span className={cn('brand-mark', small && 'small')} aria-hidden="true">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
         <path
-          d="M7 6v7a4 4 0 0 0 4 4h6M7 11h4a4 4 0 0 0 4-4V6"
+          d="M9 18V6M9 13h1a5 5 0 0 0 5-5V7"
           stroke="currentColor"
-          strokeWidth="1.7"
+          strokeWidth="1.6"
           strokeLinecap="round"
+          strokeLinejoin="round"
         />
-        <circle cx="7" cy="5" r="2" fill="currentColor" />
-        <circle cx="15" cy="5" r="2" fill="currentColor" />
-        <circle cx="18" cy="17" r="2" fill="currentColor" />
+        <circle cx="9" cy="6" r="1.7" fill="currentColor" />
+        <circle cx="15" cy="6" r="1.7" fill="currentColor" />
+        <circle cx="9" cy="18" r="1.7" fill="currentColor" />
       </svg>
     </span>
   )
@@ -96,7 +104,8 @@ export default function App() {
     [outline, setOutline] = useState<'branches' | 'context' | null>(null)
   const [draft, setDraft] = useState(''),
     [quote, setQuote] = useState<Quote | null>(null),
-    [selection, setSelection] = useState<Quote | null>(null)
+    [selection, setSelection] = useState<(Quote & { x: number; y: number }) | null>(null)
+  const [editingNote, setEditingNote] = useState<Partial<Note> | null>(null)
   const [renaming, setRenaming] = useState(false),
     [title, setTitle] = useState(''),
     [deleting, setDeleting] = useState<string | null>(null),
@@ -126,6 +135,14 @@ export default function App() {
     state?.conversation.branches.find((b) => b.id === state.conversation.activeBranchId) ??
     state?.conversation.branches[0]
   const branchKey = state && branch ? `${state.conversation.id}/${branch.id}` : ''
+  const speech = useSpeech(
+    state?.settings.speech.enabled ?? false,
+    `${branchKey}/${page}`,
+    (text) => {
+      setDraft((current) => current + (current && !current.endsWith('\n') ? ' ' : '') + text)
+      composer.current?.focus()
+    },
+  )
   useEffect(() => {
     if (state?.settings.sidebarWidth !== undefined)
       setSidebarWidth(Math.min(420, Math.max(244, state.settings.sidebarWidth)))
@@ -156,6 +173,7 @@ export default function App() {
     const offState = window.flowchat.onState(setState)
     const offStream = window.flowchat.onStream((update) => {
       if (update.status) setStreamStatus(update.status)
+      if (update.status?.startsWith('标题生成失败：')) toast.warning(update.status)
       setState((current) => {
         if (!current || current.conversation.id !== update.conversationId) return current
         return {
@@ -222,7 +240,14 @@ export default function App() {
         text: draftRef.current,
       })
   }, [])
-  useEffect(() => window.flowchat.onPrepareClose(persistDraft), [persistDraft])
+  useEffect(
+    () =>
+      window.flowchat.onPrepareClose(async () => {
+        await prepareWindowClose()
+        await persistDraft()
+      }),
+    [persistDraft],
+  )
   useEffect(() => {
     if (!branchKey) return
     draftTimer.current = setTimeout(() => {
@@ -309,6 +334,7 @@ export default function App() {
   }
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
+      if (document.querySelector('[role="dialog"]')) return
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n') {
         event.preventDefault()
         void newChat()
@@ -356,7 +382,16 @@ export default function App() {
     if (engine && path && catalogPaths.current[engine] !== path) void loadModels(engine)
   }, [branch?.engine, catalogs, loadModels, state?.tools])
   const send = async () => {
-    if (!state || !branch || !draft.trim() || state.busy || submitting) return
+    if (
+      !state ||
+      !branch ||
+      !draft.trim() ||
+      state.busy ||
+      submitting ||
+      speech.recording ||
+      speech.transcribing
+    )
+      return
     if (draftTimer.current) clearTimeout(draftTimer.current)
     setSubmitting(true)
     followLatest.current = true
@@ -377,25 +412,62 @@ export default function App() {
       setSubmitting(false)
     }
   }
-  const saveAnswer = async (turn: Turn) => {
-    if (!state || !branch) return
-    if (state.notes.some((n) => n.turnId === turn.id)) {
-      toast.info('这段回答已在笔记中')
+  const captureSelection = useCallback(() => {
+    const selected = window.getSelection(),
+      text = selected?.toString().trim()
+    const node = selected?.anchorNode
+    const element = node instanceof Element ? node : node?.parentElement
+    const answer = element?.closest('.answer')
+    if (!text || !selected?.rangeCount || !answer?.contains(selected.focusNode)) {
+      setSelection(null)
       return
     }
-    if (
-      await run({
-        type: 'saveNote',
-        note: {
-          title: turn.question.slice(0, 80),
-          text: turn.answer,
-          conversationId: state.conversation.id,
-          branchId: branch.id,
-          turnId: turn.id,
-        },
-      })
+    const article = answer.closest('.turn'),
+      turnId = article?.id.replace('turn-', '')
+    const current = stateRef.current
+    const branch = current?.conversation.branches.find(
+      (branch) => branch.id === current.conversation.activeBranchId,
     )
-      toast.success('已收进笔记', { action: { label: '查看', onClick: () => setPage('notes') } })
+    if (
+      !turnId ||
+      !branch?.turns.some((turn) => turn.id === turnId && turn.status === 'Complete')
+    ) {
+      setSelection(null)
+      return
+    }
+    const rect = selected.getRangeAt(0).getBoundingClientRect()
+    setSelection({
+      turnId,
+      quote: text.slice(0, 16000),
+      x: Math.min(innerWidth - 280, Math.max(8, rect.left + rect.width / 2 - 130)),
+      y: Math.min(innerHeight - 52, Math.max(52, rect.top - 46)),
+    })
+  }, [])
+  useEffect(() => {
+    const onSelection = captureSelection
+    const dismiss = () => setSelection(null)
+    document.addEventListener('selectionchange', onSelection)
+    window.addEventListener('resize', dismiss)
+    document.addEventListener('scroll', dismiss, true)
+    return () => {
+      document.removeEventListener('selectionchange', onSelection)
+      window.removeEventListener('resize', dismiss)
+      document.removeEventListener('scroll', dismiss, true)
+    }
+  }, [captureSelection])
+  const beginNote = (selected: Quote) => {
+    if (!state || !branch) return
+    const turn = branch.turns.find((turn) => turn.id === selected.turnId)
+    if (!turn) return
+    setEditingNote({
+      title: turn.question.slice(0, 80),
+      text: '',
+      quote: selected.quote,
+      conversationId: state.conversation.id,
+      branchId: branch.id,
+      turnId: turn.id,
+    })
+    setSelection(null)
   }
   const source = async (note: Note) => {
     if (!note.conversationId) return
@@ -438,10 +510,12 @@ export default function App() {
   const modelOptions = models.map((model) => ({ value: model.id, label: model.name }))
   const selectedCatalogModel = models.find((model) => model.id === selectedModel)
   const reasoningEffort = reasoningFor(state.settings, currentEngine, selectedCatalogModel)
-  const groups = state.entries.reduce<Record<string, typeof state.entries>>((result, entry) => {
-    ;(result[dateGroup(entry.updatedAt)] ??= []).push(entry)
-    return result
-  }, {})
+  const groups = state.entries
+    .filter((entry) => !entry.archived)
+    .reduce<Record<string, typeof state.entries>>((result, entry) => {
+      ;(result[dateGroup(entry.updatedAt)] ??= []).push(entry)
+      return result
+    }, {})
   const exportChat = async (snapshot: Snapshot) => {
     const conversation = snapshot.conversation
     const current =
@@ -518,19 +592,22 @@ export default function App() {
               ))}
             </div>
           ))}
-          {!state.entries.length && <div className="history-empty">新对话会显示在这里。</div>}
+          {!state.entries.some((entry) => !entry.archived) && (
+            <div className="history-empty">新对话会显示在这里。</div>
+          )}
         </div>
         <div className="rail-bottom">
           <nav>
             {(
               [
                 { id: 'notes', Icon: BookOpen, label: '我的笔记' },
-                { id: 'memory', Icon: Sparkles, label: '学习偏好' },
+                { id: 'memory', Icon: Sparkles, label: '指令与记忆' },
                 { id: 'settings', Icon: Settings2, label: '设置' },
               ] as const
             ).map(({ id, Icon, label }) => (
               <button
                 className={cn('rail-nav', page === id && 'active')}
+                aria-label={label}
                 key={id}
                 onClick={() => void navigate(id)}
               >
@@ -731,24 +808,16 @@ export default function App() {
                               {turn.status === 'Generating' && (
                                 <span className="generating-label">
                                   <i />
-                                  {turn.answer ? '正在回答' : streamStatus}
+                                  {turn.answer && streamStatus === '正在连接'
+                                    ? '正在回答'
+                                    : streamStatus}
                                 </span>
                               )}
                             </div>
                             <div
                               className="answer"
-                              onMouseUp={() => {
-                                const selected = window.getSelection()
-                                const text = selected?.toString().trim()
-                                const root = document.getElementById(`turn-${turn.id}`)
-                                if (
-                                  text &&
-                                  root?.contains(selected!.anchorNode) &&
-                                  root.contains(selected!.focusNode)
-                                )
-                                  setSelection({ turnId: turn.id, quote: text.slice(0, 8000) })
-                                else setSelection(null)
-                              }}
+                              onMouseUp={captureSelection}
+                              onKeyUp={captureSelection}
                             >
                               {turn.answer ? (
                                 <Markdown>{turn.answer}</Markdown>
@@ -790,28 +859,37 @@ export default function App() {
                                   onClick={() => {
                                     setQuote({
                                       turnId: turn.id,
-                                      quote: selection?.turnId === turn.id ? selection.quote : '',
+                                      quote: '',
                                     })
                                     composer.current?.focus()
                                   }}
                                 >
                                   <GitBranch />
-                                  {selection?.turnId === turn.id ? '引用选中文字追问' : '追问'}
+                                  追问
                                 </Button>
-                                <IconButton
-                                  label={
-                                    state.notes.some((n) => n.turnId === turn.id)
-                                      ? '已收进笔记'
-                                      : '收进笔记'
-                                  }
-                                  onClick={() => void saveAnswer(turn)}
-                                >
-                                  {state.notes.some((n) => n.turnId === turn.id) ? (
-                                    <Bookmark fill="currentColor" />
-                                  ) : (
-                                    <Bookmark />
-                                  )}
-                                </IconButton>
+                                {state.settings.speech.enabled && (
+                                  <IconButton
+                                    disabled={speech.recording || speech.transcribing}
+                                    label={
+                                      speech.speaking === turn.id
+                                        ? '停止朗读'
+                                        : selection?.turnId === turn.id
+                                          ? '朗读选中文字'
+                                          : '朗读回答'
+                                    }
+                                    onMouseDown={(event) => event.preventDefault()}
+                                    onClick={() =>
+                                      void speech.speak(
+                                        turn.id,
+                                        selection?.turnId === turn.id
+                                          ? selection.quote
+                                          : turn.answer,
+                                      )
+                                    }
+                                  >
+                                    {speech.speaking === turn.id ? <Square /> : <Volume2 />}
+                                  </IconButton>
+                                )}
                                 <IconButton
                                   label="复制回答"
                                   onClick={() =>
@@ -895,48 +973,30 @@ export default function App() {
                       />
                       <div className="composer-bottom">
                         <div className="composer-options">
-                          <Select
-                            label="选择对话工具"
-                            value={branch?.engine ?? 'Codex'}
+                          <WorkspaceSelect state={state} disabled={busy || submitting} run={run} />
+                          <span className="composer-divider" aria-hidden="true" />
+                          <SourceSelect
+                            engine={currentEngine}
+                            providerId={state.settings.openCodeProviderId}
+                            tools={state.tools}
+                            openCodeCatalog={catalogs.OpenCode}
                             disabled={busy || submitting}
-                            onValueChange={async (value) => {
+                            loadOpenCode={() => void loadModels('OpenCode')}
+                            onChange={async (engine, providerId) => {
                               await persistDraft()
-                              await run({ type: 'engine', engine: value as Engine })
-                            }}
-                            options={state.tools.map((t) => ({
-                              value: t.engine,
-                              label: engineNames[t.engine] + (!t.path ? ' · 未安装' : ''),
-                              disabled: !t.path,
-                            }))}
-                          />
-                          {currentEngine === 'OpenCode' && currentCatalog && (
-                            <Select
-                              className="model-select"
-                              label="选择 OpenCode 供应商"
-                              value={state.settings.openCodeProviderId ?? '__empty'}
-                              options={[
-                                ...(state.settings.openCodeProviderId
-                                  ? []
-                                  : [{ value: '__empty', label: '无可用供应商', disabled: true }]),
-                                ...currentCatalog.providers
-                                  .filter((provider) => provider.enabled)
-                                  .map((provider) => ({
-                                    value: provider.id,
-                                    label: provider.name,
-                                  })),
-                              ]}
-                              disabled={busy || submitting || loadingCatalog === currentEngine}
-                              onValueChange={(value) =>
-                                void run({
+                              if (providerId && providerId !== state.settings.openCodeProviderId) {
+                                const result = await run({
                                   type: 'settings',
                                   settings: {
-                                    openCodeProviderId: value,
+                                    openCodeProviderId: providerId,
                                     openCodeModelId: null,
                                   },
                                 })
+                                if (!result) return
                               }
-                            />
-                          )}
+                              if (engine !== currentEngine) await run({ type: 'engine', engine })
+                            }}
+                          />
                           <Select
                             className="model-select"
                             label={`选择 ${engineNames[currentEngine]} 模型`}
@@ -1002,16 +1062,30 @@ export default function App() {
                                 }
                               />
                             )}
-                          {state.settings.memoryEnabled && (
-                            <IconButton
-                              label="学习偏好已启用"
-                              onClick={() => void navigate('memory')}
-                            >
-                              <Sparkles size={14} />
-                            </IconButton>
-                          )}
                         </div>
                         <div className="composer-send">
+                          {state.settings.speech.enabled && (
+                            <IconButton
+                              label={
+                                speech.transcribing
+                                  ? '正在识别语音'
+                                  : speech.recording
+                                    ? '结束录音并识别'
+                                    : '语音输入'
+                              }
+                              disabled={busy || speech.transcribing}
+                              className={cn(speech.recording && 'is-recording')}
+                              onClick={() => void speech.toggleRecording()}
+                            >
+                              {speech.transcribing ? (
+                                <Loader2 className="spin" />
+                              ) : speech.recording ? (
+                                <Square />
+                              ) : (
+                                <Mic />
+                              )}
+                            </IconButton>
+                          )}
                           <span className="send-hint">
                             Enter <CornerDownLeft size={12} />
                           </span>
@@ -1019,7 +1093,14 @@ export default function App() {
                             className="send-button"
                             size="icon"
                             aria-label={busy ? '停止生成' : '发送问题'}
-                            disabled={!busy && (!draft.trim() || !toolsAvailable || submitting)}
+                            disabled={
+                              !busy &&
+                              (!draft.trim() ||
+                                !toolsAvailable ||
+                                submitting ||
+                                speech.recording ||
+                                speech.transcribing)
+                            }
                             onClick={() => (busy ? void run({ type: 'cancel' }) : void send())}
                           >
                             {busy ? (
@@ -1138,12 +1219,22 @@ export default function App() {
                     </>
                   ) : (
                     <div className="context-content">
-                      {state.settings.memoryEnabled && (
+                      {state.settings.instructionsEnabled && (
                         <section>
-                          <h3>学习偏好</h3>
-                          <p>{state.settings.memory}</p>
+                          <h3>用户指令 · Instruction</h3>
+                          <p>{state.settings.instructions}</p>
                         </section>
                       )}
+                      {state.settings.memoryEnabled && (
+                        <section>
+                          <h3>模型记忆 · {state.memory.name}</h3>
+                          <p>{state.memory.text || '暂无模型记忆'}</p>
+                        </section>
+                      )}
+                      <section>
+                        <h3>工作目录</h3>
+                        <p>{state.workingDirectory}</p>
+                      </section>
                       <section>
                         <h3>祖先路径 · {branch?.inheritedTurns.length ?? 0} 轮</h3>
                         {branch?.inheritedTurns.map((t) => (
@@ -1209,6 +1300,21 @@ export default function App() {
             },
           },
           {
+            label: '归档对话',
+            icon: <Archive />,
+            disabled: busy,
+            action: () => {
+              const id = conversationMenu?.id
+              if (id)
+                void persistDraft()
+                  .then(() => run({ type: 'archive', id, archived: true }))
+                  .then((result) => {
+                    if (result) toast.success('已归档，可在设置中恢复')
+                  })
+                  .catch((error) => toast.error(error.message))
+            },
+          },
+          {
             label: '删除对话',
             icon: <Trash2 />,
             danger: true,
@@ -1220,6 +1326,42 @@ export default function App() {
           },
         ]}
       />
+      {selection && page === 'chat' && (
+        <div
+          className="selection-toolbar"
+          role="toolbar"
+          aria-label="选中文字操作"
+          style={{ left: selection.x, top: selection.y }}
+          onMouseDown={(event) => event.preventDefault()}
+        >
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            aria-label="追问选中文字"
+            onClick={() => {
+              setQuote({ turnId: selection.turnId, quote: selection.quote })
+              setSelection(null)
+              composer.current?.focus()
+            }}
+          >
+            <GitBranch />
+            追问
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => beginNote(selection)}>
+            <Pencil />
+            记笔记
+          </Button>
+        </div>
+      )}
+      {editingNote && (
+        <NoteEditor
+          note={editingNote}
+          state={state}
+          run={run}
+          onClose={() => setEditingNote(null)}
+        />
+      )}
       <Dialog open={search} onOpenChange={setSearch} title="搜索对话" className="search-dialog">
         <div className="search-field">
           <Search size={18} />
@@ -1234,7 +1376,7 @@ export default function App() {
         </div>
         <div className="search-results">
           {state.entries
-            .filter((e) => e.title.toLowerCase().includes(query.toLowerCase()))
+            .filter((e) => !e.archived && e.title.toLowerCase().includes(query.toLowerCase()))
             .map((entry) => (
               <button disabled={busy} key={entry.id} onClick={() => void loadChat(entry.id)}>
                 <MessageCircle size={17} />
@@ -1242,13 +1384,15 @@ export default function App() {
                 <ArrowRight size={15} />
               </button>
             ))}
-          {!state.entries.some((e) => e.title.toLowerCase().includes(query.toLowerCase())) && (
+          {!state.entries.some(
+            (e) => !e.archived && e.title.toLowerCase().includes(query.toLowerCase()),
+          ) && (
             <div className="search-empty">
               {query ? '没有找到相关对话，试试其他关键词。' : '还没有对话，先开始一次探索吧。'}
             </div>
           )}
         </div>
-        <div className="search-footer">按标题搜索你的全部对话</div>
+        <div className="search-footer">按标题搜索未归档的对话</div>
       </Dialog>
       <Dialog open={renaming} onOpenChange={setRenaming} title="给这段思考起个名字">
         <form

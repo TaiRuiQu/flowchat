@@ -47,6 +47,9 @@ jobs:
       - name: Test Electron UI
         run: npm run test:ui
 
+      - name: Test visual layout boundaries
+        run: npm run test:layout
+
       - name: Build Windows installer
         run: npx --no-install electron-builder --win nsis --x64 --publish never
 
@@ -85,6 +88,10 @@ jobs:
           path: |
             .artifacts/electron-qa/**/*.png
             .artifacts/electron-qa/**/result.json
+            .artifacts/feature-qa/**/*.png
+            .artifacts/feature-qa/**/result.json
+            .artifacts/layout-qa/**/*.png
+            .artifacts/layout-qa/**/measurements.json
           if-no-files-found: ignore
           include-hidden-files: true
           retention-days: 14

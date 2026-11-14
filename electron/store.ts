@@ -5,7 +5,23 @@ import { id } from './domain'
 
 export class Store {
   private queue = Promise.resolve()
-  constructor(readonly root: string) {}
+  constructor(
+    readonly root: string,
+    private secrets?: { encrypt: (value: string) => string; decrypt: (value: string) => string },
+  ) {}
+  private credentials(value: unknown, encode: boolean): unknown {
+    const result = structuredClone(value) as Record<string, any>
+    for (const config of [result.titleGeneration?.api, result.speech?.asr, result.speech?.tts]) {
+      if (!config?.apiKey) continue
+      if (encode && this.secrets && !config.apiKey.startsWith('encrypted:'))
+        config.apiKey = 'encrypted:' + this.secrets.encrypt(config.apiKey)
+      else if (!encode && config.apiKey.startsWith('encrypted:')) {
+        if (!this.secrets) throw new Error('无法解密本机凭据。')
+        config.apiKey = this.secrets.decrypt(config.apiKey.slice(10))
+      }
+    }
+    return result
+  }
   async init() {
     await fs.mkdir(path.join(this.root, 'conversations'), { recursive: true })
     await fs.mkdir(path.join(this.root, 'harness'), { recursive: true })
@@ -23,7 +39,8 @@ export class Store {
     let failure: unknown
     for (const file of [this.file(name), this.file(name) + '.bak']) {
       try {
-        return JSON.parse(await fs.readFile(file, 'utf8')) as T
+        const value = JSON.parse(await fs.readFile(file, 'utf8'))
+        return (name === 'settings.json' ? this.credentials(value, false) : value) as T
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== 'ENOENT') failure = e
       }
@@ -37,7 +54,10 @@ export class Store {
     try {
       const handle = await fs.open(temp, 'wx')
       try {
-        await handle.writeFile(JSON.stringify(value, null, 2), 'utf8')
+        await handle.writeFile(
+          JSON.stringify(name === 'settings.json' ? this.credentials(value, true) : value, null, 2),
+          'utf8',
+        )
         await handle.sync()
       } finally {
         await handle.close()
@@ -76,7 +96,12 @@ export class Store {
       if (!/^[a-f0-9]{32}\.json$/.test(name)) continue
       const chat = await this.readUnlocked<Conversation | null>(`conversations/${name}`, null)
       if (chat?.branches?.length)
-        entries.push({ id: chat.id, title: chat.title, updatedAt: chat.updatedAt })
+        entries.push({
+          id: chat.id,
+          title: chat.title,
+          updatedAt: chat.updatedAt,
+          archived: chat.archived,
+        })
     }
     return entries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   }
@@ -100,7 +125,12 @@ export class Store {
       await this.writeFile(`conversations/${snapshot.id}.json`, snapshot)
       const entries = await this.listUnlocked()
       await this.writeFile('index.json', [
-        { id: snapshot.id, title: snapshot.title, updatedAt: snapshot.updatedAt },
+        {
+          id: snapshot.id,
+          title: snapshot.title,
+          updatedAt: snapshot.updatedAt,
+          archived: snapshot.archived,
+        },
         ...entries.filter((e) => e.id !== snapshot.id),
       ])
     })

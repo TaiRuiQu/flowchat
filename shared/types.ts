@@ -30,11 +30,15 @@ export interface Conversation {
   updatedAt: string
   activeBranchId: string
   branches: Branch[]
+  archived?: boolean
+  workingDirectory?: string | null
+  titleGenerated?: boolean
 }
 export interface Entry {
   id: string
   title: string
   updatedAt: string
+  archived?: boolean
 }
 export interface Note {
   id: string
@@ -44,12 +48,32 @@ export interface Note {
   conversationId?: string | null
   branchId?: string | null
   turnId?: string | null
+  quote?: string
+}
+export interface CompatibleAPI {
+  baseUrl: string
+  apiKey: string
+  model: string
+}
+export interface TitleSettings {
+  enabled: boolean
+  source: 'harness' | 'api'
+  engine: Engine
+  modelId: string
+  providerId: string
+  api: CompatibleAPI
+}
+export interface SpeechSettings {
+  enabled: boolean
+  asr: CompatibleAPI
+  tts: CompatibleAPI & { voice: string; speed: number }
 }
 export interface Settings {
   version: number
   theme: 'System' | 'Light' | 'Dark'
   memoryEnabled: boolean
-  memory: string
+  instructions: string
+  instructionsEnabled: boolean
   defaultEngine: Engine
   codexModelId?: string | null
   claudeModelId?: string | null
@@ -58,16 +82,25 @@ export interface Settings {
   openCodePath?: string | null
   openCodeProviderId?: string | null
   openCodeModelId?: string | null
+  defaultWorkingDirectory?: string | null
+  recentWorkingDirectories?: string[]
   reasoningEfforts?: Record<string, string>
   lastConversationId?: string | null
   maximized: boolean
   windowWidth: number
   windowHeight: number
   sidebarWidth?: number
+  titleGeneration: TitleSettings
+  speech: SpeechSettings
 }
 export interface ToolInfo {
   engine: Engine
   path: string | null
+}
+export interface MemoryFile {
+  name: string
+  size: number
+  modifiedAt: number
 }
 export interface Snapshot {
   settings: Settings
@@ -77,6 +110,9 @@ export interface Snapshot {
   tools: ToolInfo[]
   busy: boolean
   dataDirectory: string
+  memory: { name: string; path: string; text: string; files: MemoryFile[] }
+  workingDirectory: string
+  defaultWorkingDirectory: string
 }
 export interface CatalogModel {
   id: string
@@ -101,6 +137,13 @@ export type Command =
   | { type: 'bootstrap' | 'new' | 'cancel' }
   | { type: 'catalog'; engine: Engine }
   | { type: 'load' | 'delete'; id: string }
+  | { type: 'archive'; id: string; archived: boolean }
+  | { type: 'workspace'; directory: string | null }
+  | { type: 'workspaceDefault'; enabled: boolean }
+  | { type: 'readMemory'; file?: string }
+  | { type: 'writeMemory'; text: string; file?: string }
+  | { type: 'createMemory'; file: string }
+  | { type: 'assistNote'; text: string; quote: string; instruction: string; engine: Engine }
   | { type: 'rename'; title: string }
   | { type: 'draft'; conversationId: string; branchId: string; text: string }
   | { type: 'branch'; id: string }
@@ -119,7 +162,11 @@ export interface DesktopAPI {
   window(action: 'minimize' | 'maximize' | 'close'): void
   exportMarkdown(text: string, title: string): Promise<boolean>
   openDataDirectory(): Promise<void>
+  openWorkingDirectory(): Promise<void>
   pickExecutable(): Promise<string | null>
+  pickDirectory(): Promise<string | null>
+  transcribe(audio: ArrayBuffer, mimeType: string): Promise<string>
+  synthesize(text: string): Promise<Uint8Array>
   login(engine: Engine): Promise<void>
 }
 export const engineNames: Record<Engine, string> = {

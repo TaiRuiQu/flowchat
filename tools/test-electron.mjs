@@ -66,11 +66,11 @@ try {
   await page.getByRole('button', { name: '保存笔记', exact: true }).click()
   await page.getByRole('heading', { name: '阅读与思考', exact: true }).waitFor()
   await page.screenshot({ path: path.join(root, '02-notes.png') })
-  await page.getByRole('button', { name: '学习偏好', exact: true }).click()
-  await page.locator('#memory').fill('请用直观的中文解释，并给出一个实际例子。')
-  await page.getByRole('button', { name: '保存偏好', exact: true }).click()
-  await page.getByRole('switch', { name: '启用学习偏好' }).click()
-  await page.getByRole('switch', { name: '启用学习偏好' }).waitFor()
+  await page.getByRole('button', { name: '指令与记忆', exact: true }).click()
+  await page.locator('#instructions').fill('请用直观的中文解释，并给出一个实际例子。')
+  await page.getByRole('button', { name: '保存指令', exact: true }).click()
+  await page.getByRole('switch', { name: '启用用户指令' }).click()
+  await page.getByRole('switch', { name: '启用用户指令' }).waitFor()
   await page.getByRole('button', { name: '设置', exact: true }).click()
   await page.getByRole('button', { name: '深色', exact: true }).click()
   await page.waitForFunction(() => document.documentElement.classList.contains('dark'))
@@ -126,8 +126,9 @@ try {
   await page.evaluate(() => window.flowchat.window('close'))
   await application.close()
   const settings = JSON.parse(await readFile(path.join(root, 'data/settings.json'), 'utf8'))
-  assert.equal(settings.memory, '请用直观的中文解释，并给出一个实际例子。')
-  assert.equal(settings.memoryEnabled, false)
+  assert.equal(settings.instructions, '请用直观的中文解释，并给出一个实际例子。')
+  assert.equal(settings.instructionsEnabled, false)
+  assert.equal(settings.memoryEnabled, true)
   assert.equal(settings.sidebarWidth, 310)
   const restart = await electron.launch({
     args: ['.', `--user-data-dir=${path.join(root, 'profile-restart')}`],
@@ -228,6 +229,11 @@ $$
     assert.equal(await view.getByRole('option', { name: '默认模型', exact: true }).count(), 0)
     await view.getByRole('option', { name: '快速模型', exact: true }).click()
     const assertControlHasNoOutline = async (control) => {
+      await view.mouse.move(1300, 100)
+      await view.waitForFunction(
+        (element) => getComputedStyle(element).backgroundColor === 'rgba(0, 0, 0, 0)',
+        await control.elementHandle(),
+      )
       const focusStyle = await control.evaluate((element) => {
         const style = getComputedStyle(element)
         return { outline: style.outlineStyle, shadow: style.boxShadow }
@@ -236,59 +242,32 @@ $$
       assert.equal(focusStyle.shadow, 'none')
     }
     await assertControlHasNoOutline(modelPicker)
-    assert.equal(await view.getByRole('button', { name: /^推理强度：/ }).count(), 0)
+    assert.equal(await view.getByRole('combobox', { name: /^推理强度：/ }).count(), 0)
     await modelPicker.click()
     await view.getByRole('option', { name: '离线模型', exact: true }).click()
     assert.match(await modelPicker.textContent(), /离线模型/)
     assert.equal(await view.getByRole('slider', { name: '推理强度' }).count(), 0)
-    await view.getByRole('button', { name: '推理强度：中', exact: true }).click()
-    const effort = view.getByRole('slider', { name: '推理强度' })
-    const initialTrigger = await view.locator('.reasoning-trigger').boundingBox()
-    const initialPopover = await view.locator('.reasoning-control').boundingBox()
-    assert.ok(
-      Math.abs(
-        initialPopover.x + initialPopover.width / 2 - initialTrigger.x - initialTrigger.width / 2,
-      ) < 1,
-    )
-    const assertReasoningPosition = async () => {
-      const trigger = await view.locator('.reasoning-trigger').boundingBox()
-      const popover = await view.locator('.reasoning-control').boundingBox()
-      for (const dimension of ['x', 'y', 'width', 'height']) {
-        assert.ok(
-          Math.abs(trigger[dimension] - initialTrigger[dimension]) < 1,
-          `reasoning trigger ${dimension} shifted`,
-        )
-        assert.ok(
-          Math.abs(popover[dimension] - initialPopover[dimension]) < 1,
-          `reasoning popover ${dimension} shifted`,
-        )
-      }
-    }
-    await effort.focus()
-    await view.keyboard.press('End')
-    await view.waitForFunction(
-      () =>
-        document.querySelector('[aria-label="推理强度"]').getAttribute('aria-valuetext') === '最高',
-    )
-    await assertReasoningPosition()
-    await effort.focus()
-    await view.keyboard.press('Home')
+    const reasoningTrigger = view.locator('.reasoning-trigger')
     for (const label of ['低', '中', '高', '超高', '最高']) {
-      await view.getByRole('button', { name: `推理强度：${label}`, exact: true }).waitFor()
-      await assertReasoningPosition()
-      if (label !== '最高') await view.keyboard.press('ArrowRight')
+      await reasoningTrigger.click()
+      await view.getByRole('option', { name: label, exact: true }).click()
+      await view.getByRole('combobox', { name: `推理强度：${label}`, exact: true }).waitFor()
     }
-    await effort.focus()
-    await view.keyboard.press('End')
-    await view.keyboard.press('Escape')
-    assert.equal(await effort.count(), 0)
-    await view.waitForFunction(() =>
-      document.activeElement?.classList.contains('reasoning-trigger'),
-    )
-    await assertControlHasNoOutline(view.locator('.reasoning-trigger'))
-    const enginePicker = view.getByRole('combobox', { name: '选择对话工具', exact: true })
+    await reasoningTrigger.focus()
+    await view.keyboard.press('ArrowDown')
+    await view.getByRole('listbox').waitFor()
+    await view.waitForFunction(() => document.activeElement?.getAttribute('role') === 'option')
+    await view.keyboard.press('Home')
+    await view.waitForFunction(() => document.activeElement?.textContent === '低')
+    await view.keyboard.press('Enter')
+    await view.getByRole('combobox', { name: '推理强度：低', exact: true }).waitFor()
+    await reasoningTrigger.click()
+    await view.getByRole('option', { name: '最高', exact: true }).click()
+    await assertControlHasNoOutline(reasoningTrigger)
+    assert.equal(await view.getByRole('button', { name: '查看指令与记忆' }).count(), 0)
+    const enginePicker = view.getByRole('combobox', { name: '选择模型来源', exact: true })
     await enginePicker.click()
-    await view.getByRole('option', { name: 'Claude Code', exact: true }).click()
+    await view.getByRole('option', { name: 'Claude', exact: true }).click()
     const claudePicker = view.getByRole('combobox', { name: '选择 Claude Code 模型', exact: true })
     await view.waitForFunction(() =>
       document.querySelector('[aria-label="选择 Claude Code 模型"]')?.textContent.includes('Opus'),
@@ -296,26 +275,23 @@ $$
     await claudePicker.click()
     await view.getByRole('option', { name: 'Sonnet', exact: true }).click()
     await enginePicker.click()
-    await view.getByRole('option', { name: 'Codex', exact: true }).click()
+    await view.getByRole('option', { name: 'ChatGPT', exact: true }).click()
     assert.match(await modelPicker.textContent(), /离线模型/)
-    assert.equal(await view.getByRole('button', { name: '推理强度：最高', exact: true }).count(), 1)
+    assert.equal(
+      await view.getByRole('combobox', { name: '推理强度：最高', exact: true }).count(),
+      1,
+    )
     await enginePicker.click()
-    await view.getByRole('option', { name: 'Claude Code', exact: true }).click()
+    await view.getByRole('option', { name: 'Claude', exact: true }).click()
     assert.match(await claudePicker.textContent(), /Sonnet/)
     await enginePicker.click()
-    await view.getByRole('option', { name: 'Codex', exact: true }).click()
-    await view.getByRole('button', { name: '推理强度：最高', exact: true }).click()
-    await view.waitForTimeout(180)
+    await view.getByRole('option', { name: 'ChatGPT', exact: true }).click()
+    await reasoningTrigger.click()
+    await view.getByRole('listbox').waitFor()
     await view.screenshot({ path: path.join(root, '07-model-controls.png') })
-    await view
-      .locator('.reasoning-control')
-      .screenshot({ path: path.join(root, 'reasoning-popover.png') })
+    await view.getByRole('listbox').screenshot({ path: path.join(root, 'reasoning-dropdown.png') })
     await view.keyboard.press('Escape')
-    const reasoningTrigger = view.locator('.reasoning-trigger')
-    await reasoningTrigger.click()
-    await effort.waitFor({ state: 'visible' })
-    await reasoningTrigger.click()
-    await effort.waitFor({ state: 'hidden' })
+    await view.getByRole('listbox').waitFor({ state: 'hidden' })
     await assertControlHasNoOutline(reasoningTrigger)
     assert.equal(
       await view
@@ -382,8 +358,6 @@ $$
     await view.getByRole('menuitem', { name: '查看上下文', exact: true }).click()
     await view.getByText('当前上下文', { exact: true }).waitFor()
     await view.getByRole('button', { name: '关闭侧面板', exact: true }).click()
-    await view.getByRole('button', { name: '收进笔记', exact: true }).click()
-    await view.getByRole('button', { name: '已收进笔记', exact: true }).waitFor()
     await view.evaluate(() => {
       const paragraph = document.querySelector('.answer .markdown p')
       const range = document.createRange()
@@ -393,7 +367,7 @@ $$
       selected.addRange(range)
       paragraph.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
     })
-    await view.getByRole('button', { name: '引用选中文字追问', exact: true }).click()
+    await view.getByRole('button', { name: '追问选中文字', exact: true }).click()
     await view.locator('#composer').fill('如何把一个大问题拆成可以探索的小问题？')
     await view.screenshot({ path: path.join(root, '08-quote.png') })
     await view.getByRole('button', { name: '发送问题', exact: true }).click()
@@ -479,12 +453,12 @@ $$
       document.querySelector('[aria-label="选择 Codex 模型"]')?.textContent.includes('离线模型'),
     )
     assert.equal(
-      await restored.getByRole('button', { name: '推理强度：最高', exact: true }).count(),
+      await restored.getByRole('combobox', { name: '推理强度：最高', exact: true }).count(),
       1,
     )
-    const restoredEngine = restored.getByRole('combobox', { name: '选择对话工具', exact: true })
+    const restoredEngine = restored.getByRole('combobox', { name: '选择模型来源', exact: true })
     await restoredEngine.click()
-    await restored.getByRole('option', { name: 'Claude Code', exact: true }).click()
+    await restored.getByRole('option', { name: 'Claude', exact: true }).click()
     await restored.waitForFunction(() =>
       document
         .querySelector('[aria-label="选择 Claude Code 模型"]')
@@ -519,9 +493,9 @@ $$
           'dollar and backslash LaTeX delimiters',
           'aligned branch hover without horizontal overflow',
           'symmetric blockquote spacing',
-          'reasoning popover keyboard controls',
-          'centered reasoning popover stays fixed across label lengths',
+          'reasoning dropdown keyboard controls',
           'composer controls restore focus without outline rings',
+          'closed composer selectors have no lingering focus background',
         ],
       },
       null,

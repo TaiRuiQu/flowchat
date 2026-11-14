@@ -60,22 +60,23 @@ describe('branch context', () => {
       settings = defaults(),
       first = turn('之前'),
       next = turn('现在')
+    const memory = '模型记录的学习背景'
     branch.turns.push(first, next)
     branch.sessionId = 'session'
     branch.sessionEngine = 'Codex'
-    branch.sessionMemoryStamp = memoryStamp(settings)
+    branch.sessionMemoryStamp = memoryStamp(settings, memory)
     branch.sessionModelStamp = modelStamp(settings, branch.engine)
-    expect(promptFor(branch, next, settings).sessionId).toBe('session')
-    expect(promptFor(branch, next, settings).prompt).not.toContain('之前')
+    expect(promptFor(branch, next, settings, memory).sessionId).toBe('session')
+    expect(promptFor(branch, next, settings, memory).prompt).not.toContain('之前')
     settings.codexModelId = 'different-model'
-    expect(promptFor(branch, next, settings).sessionId).toBeNull()
-    expect(promptFor(branch, next, settings).prompt).toContain('之前')
+    expect(promptFor(branch, next, settings, memory).sessionId).toBeNull()
+    expect(promptFor(branch, next, settings, memory).prompt).toContain('之前')
     settings.codexModelId = null
-    expect(promptFor(branch, next, settings).sessionId).toBe('session')
+    expect(promptFor(branch, next, settings, memory).sessionId).toBe('session')
     settings.memoryEnabled = false
-    expect(promptFor(branch, next, settings).sessionId).toBeNull()
-    expect(promptFor(branch, next, settings).prompt).toContain('之前')
-    expect(promptFor(branch, next, settings).prompt).not.toContain(settings.memory)
+    expect(promptFor(branch, next, settings, memory).sessionId).toBeNull()
+    expect(promptFor(branch, next, settings, memory).prompt).toContain('之前')
+    expect(promptFor(branch, next, settings, memory).prompt).not.toContain(memory)
   })
 })
 describe('local persistence', () => {

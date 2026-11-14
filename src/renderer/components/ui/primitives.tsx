@@ -32,6 +32,8 @@ export function Dialog({
   description,
   children,
   className,
+  headerActions,
+  onCloseAutoFocus,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -39,19 +41,35 @@ export function Dialog({
   description?: string
   children: React.ReactNode
   className?: string
+  headerActions?: React.ReactNode
+  onCloseAutoFocus?: (event: Event) => void
 }) {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="dialog-overlay" />
-        <DialogPrimitive.Content className={cn('dialog-content', className)}>
+        <DialogPrimitive.Content
+          className={cn('dialog-content', className)}
+          onCloseAutoFocus={onCloseAutoFocus}
+        >
           <div className="dialog-heading">
             <DialogPrimitive.Title>{title}</DialogPrimitive.Title>
-            <DialogPrimitive.Close asChild>
-              <Button variant="ghost" size="icon" aria-label="关闭弹窗">
-                <X />
-              </Button>
-            </DialogPrimitive.Close>
+            {headerActions ? (
+              <div className="dialog-heading-actions">
+                {headerActions}
+                <DialogPrimitive.Close asChild>
+                  <Button variant="ghost" size="icon" aria-label="关闭弹窗">
+                    <X />
+                  </Button>
+                </DialogPrimitive.Close>
+              </div>
+            ) : (
+              <DialogPrimitive.Close asChild>
+                <Button variant="ghost" size="icon" aria-label="关闭弹窗">
+                  <X />
+                </Button>
+              </DialogPrimitive.Close>
+            )}
           </div>
           <DialogPrimitive.Description className={description ? 'dialog-description' : 'sr-only'}>
             {description ?? title}
@@ -140,18 +158,30 @@ export function Select({
   options,
   disabled,
   className,
+  icon,
+  onOpenChange,
 }: {
   value: string
   onValueChange: (value: string) => void
   label: string
-  options: { value: string; label: string; disabled?: boolean }[]
+  options: { value: string; label: string; disabled?: boolean; icon?: React.ReactNode }[]
   disabled?: boolean
   className?: string
+  icon?: React.ReactNode
+  onOpenChange?: (open: boolean) => void
 }) {
   return (
-    <SelectPrimitive.Root value={value} onValueChange={onValueChange} disabled={disabled}>
+    <SelectPrimitive.Root
+      value={value}
+      onValueChange={onValueChange}
+      disabled={disabled}
+      onOpenChange={onOpenChange}
+    >
       <SelectPrimitive.Trigger aria-label={label} className={cn('ui-select', className)}>
-        <SelectPrimitive.Value />
+        <span className="ui-select-label">
+          {icon}
+          <SelectPrimitive.Value />
+        </span>
         <SelectPrimitive.Icon>
           <ChevronDown size={13} />
         </SelectPrimitive.Icon>
@@ -166,7 +196,10 @@ export function Select({
                 disabled={option.disabled}
                 className="ui-select-item"
               >
-                <SelectPrimitive.ItemText>{option.label}</SelectPrimitive.ItemText>
+                <span className="ui-select-label">
+                  {option.icon}
+                  <SelectPrimitive.ItemText>{option.label}</SelectPrimitive.ItemText>
+                </span>
                 <SelectPrimitive.ItemIndicator>
                   <Check size={14} />
                 </SelectPrimitive.ItemIndicator>

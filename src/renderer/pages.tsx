@@ -18,8 +18,11 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from './components/ui/button'
-import { Dialog, IconButton, Menu, Switch } from './components/ui/primitives'
+import { Dialog, IconButton, Menu, Select, Switch } from './components/ui/primitives'
 import { Markdown } from './components/markdown'
+import { NoteEditor } from './components/note-editor'
+import { IntegrationSettings } from './components/integration-settings'
+import { HarnessIcon } from './components/harness-icon'
 import type { Command, Engine, Note, Snapshot } from '../../shared/types'
 import { engineNames } from '../../shared/types'
 
@@ -35,13 +38,12 @@ export function NotesPage({
 }) {
   const [editing, setEditing] = useState<Partial<Note> | null>(null),
     [deleting, setDeleting] = useState<Note | null>(null)
-  const [saving, setSaving] = useState(false)
   return (
     <div className="utility-page">
       <div className="page-title-row">
         <div>
           <h1>我的笔记</h1>
-          <p className="page-subtitle">收藏回答，记录自己的想法。</p>
+          <p className="page-subtitle">从回答中选一段文字，记下自己的理解，与模型一起完善。</p>
         </div>
         <Button size="sm" onClick={() => setEditing({ title: '', text: '' })}>
           <Plus />
@@ -56,7 +58,7 @@ export function NotesPage({
         <div className="utility-empty">
           <BookOpen />
           <h2>给灵感一个落脚点</h2>
-          <p>收藏一段回答，或从一篇自己的笔记开始。</p>
+          <p>在对话中选中文字，点击「记笔记」，即可保留原文并写下想法。</p>
           <Button variant="outline" onClick={() => setEditing({ title: '', text: '' })}>
             <Plus />
             写下第一篇笔记
@@ -110,63 +112,9 @@ export function NotesPage({
           ))}
         </div>
       )}
-      <Dialog
-        open={!!editing}
-        onOpenChange={(open) => {
-          if (!open) setEditing(null)
-        }}
-        title={editing?.id ? '编辑笔记' : '新建笔记'}
-        description="记录此刻的思考，随时回来继续。"
-      >
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault()
-            if (!editing?.title?.trim()) return
-            setSaving(true)
-            try {
-              const result = await run({
-                type: 'saveNote',
-                note: { ...editing, title: editing.title, text: editing.text ?? '' },
-              })
-              if (result) {
-                setEditing(null)
-                toast.success('笔记已保存')
-              }
-            } finally {
-              setSaving(false)
-            }
-          }}
-        >
-          <label className="field-label" htmlFor="note-title">
-            标题
-          </label>
-          <input
-            id="note-title"
-            className="field"
-            autoFocus
-            maxLength={200}
-            value={editing?.title ?? ''}
-            onChange={(e) => setEditing({ ...editing, title: e.target.value })}
-          />
-          <label className="field-label" htmlFor="note-text">
-            内容 · 支持 Markdown
-          </label>
-          <textarea
-            id="note-text"
-            className="field note-editor"
-            value={editing?.text ?? ''}
-            onChange={(e) => setEditing({ ...editing, text: e.target.value })}
-          />
-          <div className="dialog-footer">
-            <Button type="button" variant="ghost" onClick={() => setEditing(null)}>
-              取消
-            </Button>
-            <Button disabled={saving || !editing?.title?.trim()}>
-              {saving && <Loader2 className="spin" />}保存笔记
-            </Button>
-          </div>
-        </form>
-      </Dialog>
+      {editing && (
+        <NoteEditor note={editing} state={state} run={run} onClose={() => setEditing(null)} />
+      )}
       <Dialog
         open={!!deleting}
         onOpenChange={(open) => {
@@ -194,62 +142,203 @@ export function NotesPage({
   )
 }
 export function MemoryPage({ state, run }: { state: Snapshot; run: RunCommand }) {
-  const [memory, setMemory] = useState(state.settings.memory),
+  const [instructions, setInstructions] = useState(state.settings.instructions)
+  const [memory, setMemory] = useState(state.memory.text),
     [saving, setSaving] = useState(false)
-  useEffect(() => setMemory(state.settings.memory), [state.settings.memory])
+  const [newMemory, setNewMemory] = useState(false),
+    [newFile, setNewFile] = useState('')
+  const saveMemoryDraft = async () =>
+    memory === state.memory.text ||
+    !!(await run({ type: 'writeMemory', text: memory, file: state.memory.name }))
+  useEffect(() => setInstructions(state.settings.instructions), [state.settings.instructions])
+  useEffect(() => setMemory(state.memory.text), [state.memory.text, state.memory.path])
   return (
     <div className="utility-page narrow">
-      <h1>学习偏好</h1>
-      <p className="page-subtitle">告诉 FlowChat 你喜欢的解释方式和学习背景。</p>
-      <div className="setting-row memory-toggle">
-        <div>
-          <h3>在对话中使用学习偏好</h3>
-          <p>开启后，这些偏好会随你的问题一起发送。</p>
+      <h1>指令与记忆</h1>
+      <p className="page-subtitle">用户指令由你设定；模型记忆由模型维护，分别保存、独立启用。</p>
+      <section className="settings-section">
+        <div className="setting-row toggle-row">
+          <div>
+            <h2>用户指令 · Instruction</h2>
+            <p>告诉模型如何回答。这些设置只有你可以修改，不属于模型记忆。</p>
+          </div>
+          <Switch
+            label="启用用户指令"
+            checked={state.settings.instructionsEnabled}
+            disabled={state.busy}
+            onCheckedChange={(value) =>
+              void run({ type: 'settings', settings: { instructionsEnabled: value } })
+            }
+          />
         </div>
-        <Switch
-          label="启用学习偏好"
-          checked={state.settings.memoryEnabled}
+        <label className="field-label" htmlFor="instructions">
+          我的长期指令
+        </label>
+        <textarea
+          id="instructions"
+          className="field memory-editor"
           disabled={state.busy}
-          onCheckedChange={(value) =>
-            void run({ type: 'settings', settings: { memoryEnabled: value } })
-          }
+          value={instructions}
+          onChange={(event) => setInstructions(event.target.value)}
         />
-      </div>
-      <label className="field-label" htmlFor="memory">
-        我的学习偏好
-      </label>
-      <textarea
-        id="memory"
-        className="field memory-editor"
-        disabled={state.busy}
-        value={memory}
-        onChange={(e) => setMemory(e.target.value)}
-        placeholder="例如：解释时先给直观的例子，再介绍严格定义……"
-      />
-      <div className="memory-footer">
-        <span>{memory.length} 字 · 由你编辑和管理</span>
-        <Button
-          disabled={state.busy || saving || memory === state.settings.memory}
-          onClick={async () => {
+        <div className="memory-footer">
+          <span>由你编辑 · 模型只读</span>
+          <Button
+            disabled={state.busy || instructions === state.settings.instructions}
+            onClick={async () => {
+              if (await run({ type: 'settings', settings: { instructions } }))
+                toast.success('用户指令已更新')
+            }}
+          >
+            <Check />
+            保存指令
+          </Button>
+        </div>
+      </section>
+      <section className="settings-section">
+        <div className="setting-row toggle-row">
+          <div>
+            <h2>模型记忆 · memory/</h2>
+            <p>
+              所有对话共享分类记忆。memory.md 保存简短索引，模型按需读取相关文档，也可以主动整理。
+            </p>
+          </div>
+          <Switch
+            label="启用模型记忆"
+            checked={state.settings.memoryEnabled}
+            disabled={state.busy}
+            onCheckedChange={(value) =>
+              void run({ type: 'settings', settings: { memoryEnabled: value } })
+            }
+          />
+        </div>
+        <div className="memory-documents-toolbar">
+          <Select
+            label="选择记忆文档"
+            value={state.memory.name}
+            options={state.memory.files.map((file) => ({
+              value: file.name,
+              label: file.name === 'memory.md' ? 'memory.md · 索引' : file.name,
+            }))}
+            disabled={state.busy || saving}
+            onValueChange={async (file) => {
+              setSaving(true)
+              try {
+                if (await saveMemoryDraft()) await run({ type: 'readMemory', file })
+              } finally {
+                setSaving(false)
+              }
+            }}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={state.busy || saving}
+            onClick={() => {
+              setNewFile('')
+              setNewMemory(true)
+            }}
+          >
+            <Plus />
+            新建文档
+          </Button>
+        </div>
+        <p className="data-path memory-file-path">文件位置：{state.memory.path}</p>
+        <label className="field-label" htmlFor="memory">
+          {state.memory.name === 'memory.md' ? '全局记忆索引' : '分类记忆文档'}
+        </label>
+        <textarea
+          id="memory"
+          className="field memory-editor"
+          disabled={state.busy}
+          value={memory}
+          onChange={(event) => setMemory(event.target.value)}
+          placeholder="告诉模型「请记住……」，它会直接更新这份文档。"
+        />
+        <div className="memory-footer">
+          <span>
+            {state.memory.files.length} 份文档 · 当前 {memory.length} 字
+          </span>
+          <div className="inline-actions">
+            <Button
+              variant="ghost"
+              disabled={state.busy || saving}
+              onClick={() => void run({ type: 'readMemory' })}
+            >
+              <RefreshCw />
+              刷新记忆
+            </Button>
+            <Button
+              disabled={state.busy || saving || memory === state.memory.text}
+              onClick={async () => {
+                setSaving(true)
+                try {
+                  if (await run({ type: 'writeMemory', text: memory, file: state.memory.name }))
+                    toast.success('模型记忆已保存')
+                } finally {
+                  setSaving(false)
+                }
+              }}
+            >
+              {saving ? <Loader2 className="spin" /> : <Check />}保存记忆
+            </Button>
+          </div>
+        </div>
+      </section>
+      <Dialog
+        open={newMemory}
+        onOpenChange={setNewMemory}
+        title="新建记忆文档"
+        description="按主题保存长期信息，也可以使用子目录，例如 projects/flowchat.md。"
+      >
+        <form
+          onSubmit={async (event) => {
+            event.preventDefault()
+            const name = newFile.trim()
+            if (!name) return
             setSaving(true)
             try {
-              if (await run({ type: 'settings', settings: { memory } }))
-                toast.success('学习偏好已更新')
+              if (
+                (await saveMemoryDraft()) &&
+                (await run({
+                  type: 'createMemory',
+                  file: /\.md$/i.test(name) ? name : `${name}.md`,
+                }))
+              )
+                setNewMemory(false)
             } finally {
               setSaving(false)
             }
           }}
         >
-          {saving ? <Loader2 className="spin" /> : <Check />}保存偏好
-        </Button>
-      </div>
-      <div className="quiet-callout">
-        <BookOpen size={18} />
-        <div>
-          <h3>好的偏好，简单具体就好</h3>
-          <p>可以写下你的语言、背景、喜欢的解释方式。FlowChat 不会自动收集或改写这些内容。</p>
-        </div>
-      </div>
+          <label className="field-label" htmlFor="memory-file-name">
+            文档名称
+          </label>
+          <input
+            id="memory-file-name"
+            className="field"
+            value={newFile}
+            onChange={(event) => setNewFile(event.target.value)}
+            placeholder="例如 preferences.md"
+            disabled={saving}
+            maxLength={1024}
+            autoFocus
+          />
+          <div className="dialog-footer">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setNewMemory(false)}
+              disabled={saving}
+            >
+              取消
+            </Button>
+            <Button type="submit" disabled={saving || !newFile.trim()}>
+              {saving ? <Loader2 className="spin" /> : <Plus />}创建文档
+            </Button>
+          </div>
+        </form>
+      </Dialog>
     </div>
   )
 }
@@ -272,7 +361,7 @@ function ToolSettings({
     <div className="tool-setting">
       <div className="tool-heading">
         <div className="tool-mark">
-          {engine === 'Codex' ? 'C' : engine === 'ClaudeCode' ? '✳' : 'O'}
+          <HarnessIcon engine={engine} />
         </div>
         <div>
           <h3>{engineNames[engine]}</h3>
@@ -382,7 +471,7 @@ export function SettingsPage({ state, run }: { state: Snapshot; run: RunCommand 
   return (
     <div className="utility-page narrow">
       <h1>设置</h1>
-      <p className="page-subtitle">管理外观、对话工具和本地数据。</p>
+      <p className="page-subtitle">管理外观、对话工具、标题与语音服务。</p>
       <section className="settings-section">
         <h2>外观</h2>
         <div className="theme-picker" role="group" aria-label="主题">
@@ -426,6 +515,7 @@ export function SettingsPage({ state, run }: { state: Snapshot; run: RunCommand 
           <ToolSettings key={engine} engine={engine} state={state} run={run} />
         ))}
       </section>
+      <IntegrationSettings state={state} run={run} />
       <section className="settings-section">
         <h2>本地数据</h2>
         <div className="setting-row">

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, safeStorage, shell } from 'electron'
 import path from 'node:path'
 import { promises as fs } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -7,6 +7,8 @@ import { Controller } from './controller'
 import { Store } from './store'
 import { locate, safeError } from './harness'
 import type { Command, Engine } from '../shared/types'
+import { synthesize, transcribe } from './compatible-api'
+import { resolveWorkspace } from './workspace'
 
 const directory = path.dirname(fileURLToPath(import.meta.url))
 let window: BrowserWindow | undefined,
@@ -27,9 +29,19 @@ else {
     .then(async () => {
       app.setAppUserModelId('com.flowchat.desktop')
       const root = process.env.FLOWCHAT_DATA_DIR ?? path.join(app.getPath('userData'), 'workspace')
-      controller = new Controller(new Store(root), (event, value) => {
-        if (window && !window.isDestroyed()) window.webContents.send(`flowchat:${event}`, value)
-      })
+      controller = new Controller(
+        new Store(root, {
+          encrypt: (value) => {
+            if (!safeStorage.isEncryptionAvailable())
+              throw new Error('系统凭据加密不可用，无法保存 API Key。')
+            return safeStorage.encryptString(value).toString('base64')
+          },
+          decrypt: (value) => safeStorage.decryptString(Buffer.from(value, 'base64')),
+        }),
+        (event, value) => {
+          if (window && !window.isDestroyed()) window.webContents.send(`flowchat:${event}`, value)
+        },
+      )
       // Loading is done by the renderer so data errors are recoverable inside the window.
       let geometry = { width: 1440, height: 960, maximized: false }
       try {
@@ -41,7 +53,7 @@ else {
         }
       } catch {}
       window = new BrowserWindow({
-        icon: path.join(directory, '../assets/flowchat.ico'),
+        icon: path.join(directory, '../assets/flowchat.png'),
         width: geometry.width,
         height: geometry.height,
         minWidth: 420,
@@ -102,6 +114,12 @@ else {
         isTrusted(event)
         await shell.openPath(root)
       })
+      ipcMain.handle('flowchat:open-workspace', async (event) => {
+        isTrusted(event)
+        const directory = await resolveWorkspace(controller.workingDirectory)
+        const error = await shell.openPath(directory)
+        if (error) throw new Error(error)
+      })
       ipcMain.handle('flowchat:pick-executable', async (event) => {
         isTrusted(event)
         const result = await dialog.showOpenDialog(window!, {
@@ -111,6 +129,34 @@ else {
           ],
         })
         return result.filePaths[0] ?? null
+      })
+      ipcMain.handle('flowchat:pick-directory', async (event) => {
+        isTrusted(event)
+        const result = await dialog.showOpenDialog(window!, { properties: ['openDirectory'] })
+        return result.filePaths[0] ?? null
+      })
+      ipcMain.handle('flowchat:transcribe', async (event, audio: unknown, mimeType: unknown) => {
+        isTrusted(event)
+        if (
+          !(audio instanceof ArrayBuffer) ||
+          typeof mimeType !== 'string' ||
+          mimeType.length > 100
+        )
+          throw new Error('无效的录音数据。')
+        try {
+          return await transcribe(controller.settings.speech, new Uint8Array(audio), mimeType)
+        } catch (error) {
+          throw new Error(safeError(error))
+        }
+      })
+      ipcMain.handle('flowchat:synthesize', async (event, text: unknown) => {
+        isTrusted(event)
+        if (typeof text !== 'string') throw new Error('无效的朗读内容。')
+        try {
+          return await synthesize(controller.settings.speech, text)
+        } catch (error) {
+          throw new Error(safeError(error))
+        }
       })
       ipcMain.handle('flowchat:login', async (event, engine: Engine) => {
         isTrusted(event)
@@ -138,8 +184,23 @@ else {
         return { action: 'deny' }
       })
       window.webContents.on('will-navigate', (event) => event.preventDefault())
-      window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) =>
-        callback(false),
+      window.webContents.session.setPermissionRequestHandler(
+        (contents, permission, callback, details) =>
+          callback(
+            contents === window?.webContents &&
+              permission === 'media' &&
+              controller.settings.speech.enabled &&
+              'mediaTypes' in details &&
+              details.mediaTypes?.includes('audio') === true &&
+              !details.mediaTypes.includes('video'),
+          ),
+      )
+      window.webContents.session.setPermissionCheckHandler(
+        (contents, permission, _origin, details) =>
+          contents === window?.webContents &&
+          permission === 'media' &&
+          controller.settings.speech.enabled &&
+          details.mediaType === 'audio',
       )
       window.once('ready-to-show', () => {
         if (geometry.maximized) window?.maximize()
@@ -166,7 +227,7 @@ else {
               await new Promise<void>((resolve, reject) => {
                 const timeout = setTimeout(() => {
                   ipcMain.removeListener('flowchat:close-ready', ready)
-                  reject(new Error('等待界面保存草稿超时。'))
+                  reject(new Error('等待界面保存内容超时。'))
                 }, 5000)
                 const ready = (event: Electron.IpcMainEvent, error?: string) => {
                   if (event.sender !== window?.webContents) return

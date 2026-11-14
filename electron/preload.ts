@@ -8,7 +8,7 @@ const api: DesktopAPI = {
         await callback()
         ipcRenderer.send('flowchat:close-ready')
       } catch {
-        ipcRenderer.send('flowchat:close-ready', '草稿保存失败，请重试。')
+        ipcRenderer.send('flowchat:close-ready', '内容保存失败，请重试。')
       }
     }
     ipcRenderer.on('flowchat:prepare-close', handler)
@@ -34,7 +34,11 @@ const api: DesktopAPI = {
   window: (action) => ipcRenderer.send('flowchat:window', action),
   exportMarkdown: (text, title) => ipcRenderer.invoke('flowchat:export', text, title),
   openDataDirectory: () => ipcRenderer.invoke('flowchat:open-data'),
+  openWorkingDirectory: () => ipcRenderer.invoke('flowchat:open-workspace'),
   pickExecutable: () => ipcRenderer.invoke('flowchat:pick-executable'),
+  pickDirectory: () => ipcRenderer.invoke('flowchat:pick-directory'),
+  transcribe: (audio, mimeType) => ipcRenderer.invoke('flowchat:transcribe', audio, mimeType),
+  synthesize: (text) => ipcRenderer.invoke('flowchat:synthesize', text),
   login: (engine) => ipcRenderer.invoke('flowchat:login', engine),
 }
 contextBridge.exposeInMainWorld('flowchat', api)

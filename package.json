@@ -1,6 +1,6 @@
 {
   "name": "flowchat",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "author": "Tairui Qu",
   "license": "MIT",
@@ -24,13 +24,15 @@
     "typecheck": "tsc --noEmit",
     "start": "electron-vite preview",
     "test": "vitest run",
-    "test:ui": "node tools/test-electron.mjs",
+    "test:ui": "node tools/test-electron.mjs && node tools/test-features.mjs",
+    "test:layout": "node tools/test-layout.mjs",
     "format": "prettier --write .github docs README.md electron shared src/renderer tests/electron tools/*.mjs *.json *.ts",
     "format:check": "prettier --check .github docs README.md electron shared src/renderer tests/electron tools/*.mjs *.json *.ts",
     "package": "npm run build && electron-builder --win dir --x64 --publish never",
     "dist": "npm run build && electron-builder --win nsis --x64 --publish never"
   },
   "dependencies": {
+    "@ant-design/icons": "6.3.4",
     "@opencode/client": "2.2.7",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-dropdown-menu": "^2.1.16",

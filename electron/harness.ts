@@ -16,6 +16,8 @@ export interface Request {
   providerId?: string | null
   modelId?: string | null
   reasoningEffort?: string
+  fileAccess?: boolean
+  memoryDirectory?: string
 }
 export interface Update {
   text?: string
@@ -286,8 +288,12 @@ export async function runCodex(request: Request, update: (u: Update) => void, si
     if (!data || data.threadId !== sessionId) return
     if (message.method === 'item/agentMessage/delta') {
       texts.set(data.itemId, (texts.get(data.itemId) ?? '') + data.delta)
-      update({ text: [...texts.values()].join('\n\n') })
+      update({ text: [...texts.values()].join('\n\n'), status: '正在回答' })
     }
+    if (message.method === 'item/started' && data.item?.type === 'fileChange')
+      update({ status: '正在编辑文件' })
+    if (message.method === 'item/started' && data.item?.type === 'commandExecution')
+      update({ status: '正在操作工作目录' })
     if (message.method === 'item/completed' && data.item?.type === 'agentMessage') {
       texts.set(data.item.id, data.item.text)
       update({ text: [...texts.values()].join('\n\n') })
@@ -319,7 +325,7 @@ export async function runCodex(request: Request, update: (u: Update) => void, si
     const params = {
       cwd: request.directory,
       approvalPolicy: 'never',
-      sandbox: 'read-only',
+      sandbox: request.fileAccess ? 'workspace-write' : 'read-only',
       ...(request.modelId ? { model: request.modelId } : {}),
     }
     const result = request.sessionId
@@ -332,7 +338,30 @@ export async function runCodex(request: Request, update: (u: Update) => void, si
       threadId: sessionId,
       input: [{ type: 'text', text: request.prompt }],
       approvalPolicy: 'never',
-      sandboxPolicy: { type: 'readOnly' },
+      sandboxPolicy: request.fileAccess
+        ? {
+            type: 'workspaceWrite',
+            writableRoots: [
+              ...new Set([
+                request.directory,
+                ...(request.memoryDirectory ? [request.memoryDirectory] : []),
+              ]),
+            ],
+            readOnlyAccess: {
+              type: 'restricted',
+              includePlatformDefaults: true,
+              readableRoots: [
+                ...new Set([
+                  request.directory,
+                  ...(request.memoryDirectory ? [request.memoryDirectory] : []),
+                ]),
+              ],
+            },
+            networkAccess: false,
+            excludeTmpdirEnvVar: true,
+            excludeSlashTmp: true,
+          }
+        : { type: 'readOnly' },
       ...(request.reasoningEffort ? { effort: request.reasoningEffort } : {}),
     })
     await done
@@ -377,7 +406,14 @@ export class ClaudeParser {
         )
       else if (message.result) this.text = message.result
     }
-    return { text: this.text, sessionId: this.sessionId || undefined }
+    const tool =
+      message.type === 'assistant' &&
+      message.message?.content?.find((part: any) => part.type === 'tool_use')
+    return {
+      text: this.text,
+      sessionId: this.sessionId || undefined,
+      ...(tool ? { status: `正在使用文件工具：${tool.name}` } : {}),
+    }
   }
 }
 export async function runClaude(
@@ -392,7 +428,7 @@ export async function runClaude(
     '--verbose',
     '--include-partial-messages',
     '--tools',
-    '',
+    request.fileAccess ? 'Read,Edit,Write,Glob,Grep' : '',
     '--strict-mcp-config',
     '--mcp-config',
     '{"mcpServers":{}}',
@@ -402,6 +438,9 @@ export async function runClaude(
     '--settings',
     '{"disableAllHooks":true}',
   ]
+  if (request.fileAccess)
+    args.push('--restricted', '--allowedTools', 'Read', 'Edit', 'Write', 'Glob', 'Grep')
+  if (request.fileAccess && request.memoryDirectory) args.push('--add-dir', request.memoryDirectory)
   if (request.modelId) args.push('--model', request.modelId)
   if (request.reasoningEffort) args.push('--effort', request.reasoningEffort)
   if (request.sessionId) args.push('--resume', request.sessionId)
@@ -544,7 +583,27 @@ export async function runOpenCode(
           location: { directory: request.directory },
           model,
           title: 'FlowChat',
-          permissions: [{ action: '*', resource: '*', effect: 'deny' }],
+          permissions: [
+            { action: '*', resource: '*', effect: 'deny' },
+            ...(request.fileAccess
+              ? ['read', 'edit', 'write', 'glob', 'grep', 'list'].map((action) => ({
+                  action,
+                  resource: '*',
+                  effect: 'allow' as const,
+                }))
+              : []),
+            { action: 'external_directory', resource: '*', effect: 'deny' },
+            ...(request.fileAccess && request.memoryDirectory
+              ? [
+                  request.memoryDirectory.replaceAll('\\', '/'),
+                  request.memoryDirectory.replaceAll('\\', '/') + '/**',
+                ].map((resource) => ({
+                  action: 'external_directory',
+                  resource,
+                  effect: 'allow' as const,
+                }))
+              : []),
+          ],
         },
         { signal },
       )
@@ -574,6 +633,7 @@ export async function runOpenCode(
         texts.set(key, (texts.get(key) ?? '') + data.delta)
         update({ text: [...texts.values()].join('\n\n') })
       }
+      if (event.type === 'session.tool.called') update({ status: '正在操作工作目录' })
       if (event.type === 'session.text.ended') {
         texts.set(`${data.assistantMessageID}:${data.ordinal}`, data.text)
         update({ text: [...texts.values()].join('\n\n') })
