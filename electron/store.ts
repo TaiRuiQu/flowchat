@@ -11,7 +11,12 @@ export class Store {
   ) {}
   private credentials(value: unknown, encode: boolean): unknown {
     const result = structuredClone(value) as Record<string, any>
-    for (const config of [result.titleGeneration?.api, result.speech?.asr, result.speech?.tts]) {
+    for (const config of [
+      result.titleGeneration?.api,
+      result.speech?.asr,
+      result.speech?.tts,
+      ...Object.values(result.credentials ?? {}).map((entry: any) => entry?.api),
+    ]) {
       if (!config?.apiKey) continue
       if (encode && this.secrets && !config.apiKey.startsWith('encrypted:'))
         config.apiKey = 'encrypted:' + this.secrets.encrypt(config.apiKey)

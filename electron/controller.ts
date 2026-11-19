@@ -3,10 +3,14 @@ import { z } from 'zod'
 import { active, createConversation, defaults, fork, id, memoryStamp, promptFor } from './domain'
 import { Store } from './store'
 import { catalog, checkTool, locate, runHarness, safeError, toolsFor } from './harness'
+import { credentialProblem, discoverCredentials, resolveCredentials } from './credentials'
+import { clearOpenCodeProvider, writeOpenCodeProvider } from './opencode-config'
 import type {
   Catalog,
   Command,
+  CredentialReport,
   Engine,
+  EngineAuth,
   Note,
   Settings,
   Snapshot,
@@ -34,6 +38,28 @@ const apiConfig = z
     baseUrl: z.string().max(4096),
     apiKey: z.string().max(8192),
     model: z.string().max(512),
+  })
+  .strict()
+const engineAuth = z
+  .object({
+    mode: z.enum(['system', 'custom']),
+    source: z.enum(['auto', 'settings', 'environment', 'cli']),
+    api: z
+      .object({
+        baseUrl: z.string().max(4096),
+        apiKey: z.string().max(8192),
+        header: z.enum(['bearer', 'api-key']),
+        model: z.string().max(512),
+        protocol: z.enum(['openai', 'anthropic']),
+      })
+      .strict(),
+  })
+  .strict()
+const credentialsPatch = z
+  .object({
+    ClaudeCode: engineAuth.optional(),
+    Codex: engineAuth.optional(),
+    OpenCode: engineAuth.optional(),
   })
   .strict()
 const settingsPatch = z
@@ -74,6 +100,7 @@ const settingsPatch = z
       })
       .strict()
       .optional(),
+    credentials: credentialsPatch.optional(),
   })
   .strict()
 const schema = z.discriminatedUnion('type', [
@@ -103,6 +130,7 @@ const schema = z.discriminatedUnion('type', [
   }),
   z.object({ type: z.literal('retry'), turnId: guid }),
   z.object({ type: z.enum(['engine', 'check']), engine }),
+  z.object({ type: z.enum(['credentials', 'verifyAuth']), engine }),
   z.object({ type: z.literal('settings'), settings: settingsPatch }),
   z.object({
     type: z.literal('saveNote'),
@@ -120,6 +148,7 @@ const schema = z.discriminatedUnion('type', [
   }),
 ])
 export class Controller {
+  version = ''
   settings = defaults()
   notes: Note[] = []
   chat = createConversation()
@@ -152,6 +181,7 @@ export class Controller {
     const files = await listMemoryFiles(this.memoryDirectory)
     if (!files.some((file) => file.name === this.memoryFile)) this.memoryFile = 'memory.md'
     return structuredClone({
+      version: this.version,
       settings: this.settings,
       entries: await this.store.list(),
       notes: this.notes,
@@ -168,7 +198,7 @@ export class Controller {
       },
     })
   }
-  execute(raw: Command): Promise<Snapshot | Catalog | { message: string }> {
+  execute(raw: Command): Promise<Snapshot | Catalog | CredentialReport | { message: string }> {
     if (raw?.type === 'cancel') {
       schema.parse(raw)
       this.abort?.abort()
@@ -189,7 +219,12 @@ export class Controller {
     if (!executable) throw new Error('未找到所选工具，请在设置中指定路径。')
     const result =
       (!refresh && this.catalogs[engine]) ||
-      (await catalog(engine, executable, path.join(this.store.root, 'harness')))
+      (await catalog(
+        engine,
+        executable,
+        path.join(this.store.root, 'harness'),
+        resolveCredentials(engine, this.settings.credentials[engine]).env,
+      ))
     this.catalogs[engine] = result
     const selection = modelSelection(this.settings, engine, result)
     if (
@@ -208,7 +243,9 @@ export class Controller {
     await this.store.save(this.chat)
     await this.store.write('settings.json', this.settings)
   }
-  private async dispatch(command: Command): Promise<Snapshot | Catalog | { message: string }> {
+  private async dispatch(
+    command: Command,
+  ): Promise<Snapshot | Catalog | CredentialReport | { message: string }> {
     if (!this.initialized) {
       await this.store.init()
       const { memory: legacyInstructions, ...saved } = await this.store.read<
@@ -219,6 +256,22 @@ export class Controller {
         ...saved,
         instructions: saved.instructions ?? legacyInstructions ?? defaults().instructions,
         instructionsEnabled: saved.instructionsEnabled ?? saved.memoryEnabled ?? true,
+      }
+      // Older builds stored a single Claude credential block; keep per-engine api fields complete.
+      const legacy = (saved as Partial<Settings> & { claudeAuth?: Partial<EngineAuth> }).claudeAuth,
+        merge = (value?: Partial<EngineAuth>): EngineAuth => ({
+          mode: value?.mode === 'custom' ? 'custom' : 'system',
+          source: (['auto', 'settings', 'environment', 'cli'] as const).includes(
+            value?.source as 'auto',
+          )
+            ? (value!.source as EngineAuth['source'])
+            : 'auto',
+          api: { ...defaults().credentials.ClaudeCode.api, ...(value?.api ?? {}) },
+        })
+      this.settings.credentials = {
+        ClaudeCode: merge(saved.credentials?.ClaudeCode ?? legacy),
+        Codex: merge(saved.credentials?.Codex),
+        OpenCode: merge(saved.credentials?.OpenCode),
       }
       this.notes = await this.store.read<Note[]>('notes.json', [])
       const entries = await this.store.list(),
@@ -361,13 +414,35 @@ export class Controller {
         break
       case 'settings':
         if (Object.keys(command.settings).some((key) => key !== 'sidebarWidth')) this.idle()
+        for (const [engine, auth] of Object.entries(command.settings.credentials ?? {})) {
+          const problem = credentialProblem(engine as Engine, auth as EngineAuth)
+          if (problem) throw new Error(`${engine}：${problem}`)
+        }
         Object.assign(this.settings, {
           ...command.settings,
+          credentials: {
+            ...this.settings.credentials,
+            ...(command.settings.credentials ?? {}),
+          },
           reasoningEfforts: {
             ...this.settings.reasoningEfforts,
             ...command.settings.reasoningEfforts,
           },
         })
+        if (command.settings.credentials) {
+          const auth = this.settings.credentials.OpenCode
+          if (auth.mode === 'custom') {
+            writeOpenCodeProvider(auth.api)
+            this.settings.openCodeProviderId = 'flowchat'
+            this.settings.openCodeModelId = auth.api.model.trim()
+          } else if (this.settings.openCodeProviderId === 'flowchat') {
+            clearOpenCodeProvider()
+            this.settings.openCodeProviderId = null
+            this.settings.openCodeModelId = null
+          }
+          for (const engine of Object.keys(command.settings.credentials))
+            delete this.catalogs[engine as Engine]
+        }
         if (command.settings.codexPath !== undefined) delete this.catalogs.Codex
         if (command.settings.claudePath !== undefined) delete this.catalogs.ClaudeCode
         if (command.settings.openCodePath !== undefined) delete this.catalogs.OpenCode
@@ -408,12 +483,76 @@ export class Controller {
             command.engine,
             executable,
             path.join(this.store.root, 'harness'),
+            resolveCredentials(command.engine, this.settings.credentials[command.engine]).env,
           ),
+        }
+      }
+      case 'credentials': {
+        const auth = this.settings.credentials[command.engine]
+        return {
+          engine: command.engine,
+          options: await discoverCredentials(
+            command.engine,
+            locate(command.engine, this.settings),
+            path.join(this.store.root, 'harness'),
+          ),
+          mode: auth.mode,
+          source: auth.source,
+        }
+      }
+      case 'verifyAuth': {
+        this.idle()
+        const executable = locate(command.engine, this.settings)
+        if (!executable) throw new Error('未找到所选工具，请先设置可执行文件路径。')
+        const credentials = resolveCredentials(
+          command.engine,
+          this.settings.credentials[command.engine],
+        )
+        try {
+          if (command.engine === 'OpenCode') {
+            await this.prepareModel('OpenCode', true)
+            const providerId = this.settings.openCodeProviderId,
+              modelId = this.settings.openCodeModelId,
+              found = availableModels(this.catalogs.OpenCode!, 'OpenCode', this.settings).find(
+                (model) => model.id === modelId && model.providerId === providerId,
+              )
+            if (!found) throw new Error('没有取到所选供应商的模型，请重新读取模型目录。')
+            return { message: `连接成功 · 已识别 ${providerId}/${modelId}` }
+          }
+          const controller = new AbortController(),
+            timer = setTimeout(() => controller.abort(), 45_000)
+          try {
+            const result = await runHarness(
+              {
+                engine: command.engine,
+                executable,
+                directory: path.join(this.store.root, 'harness'),
+                fileAccess: false,
+                prompt: '只回复 OK。',
+                modelId: modelFor(this.settings, command.engine),
+                auth: credentials.env,
+                restricted: credentials.restricted,
+              },
+              () => {},
+              controller.signal,
+            )
+            return {
+              message: `连接成功 · 模型回复：${result.text.trim().slice(0, 60) || '(空)'}`,
+            }
+          } finally {
+            clearTimeout(timer)
+          }
+        } catch (error) {
+          return { message: `连接失败：${safeError(error)}` }
         }
       }
       case 'assistNote': {
         this.idle()
         await this.prepareModel(command.engine)
+        const credentials = resolveCredentials(
+          command.engine,
+          this.settings.credentials[command.engine],
+        )
         const abort = new AbortController()
         this.abort = abort
         this.emit('state', await this.snapshot())
@@ -431,6 +570,8 @@ export class Controller {
               fileAccess: false,
               modelId: modelFor(this.settings, command.engine),
               providerId: this.settings.openCodeProviderId,
+              auth: credentials.env,
+              restricted: credentials.restricted,
               prompt: `你在和用户共同编辑一篇笔记。依据引用和用户要求修改当前笔记，只输出完整的 Markdown 笔记正文，不加代码围栏或说明。不要调用工具。\n<quote>\n${command.quote}\n</quote>\n<note>\n${command.text}\n</note>\n用户的编辑要求：${command.instruction}`,
             },
             () => {},
@@ -511,7 +652,8 @@ export class Controller {
   private start(turn: Turn) {
     const chat = this.chat,
       branch = active(chat),
-      settings = structuredClone(this.settings)
+      settings = structuredClone(this.settings),
+      credentials = resolveCredentials(branch.engine, settings.credentials[branch.engine])
     const abort = new AbortController()
     this.abort = abort
     const directory = this.workingDirectory
@@ -538,6 +680,8 @@ export class Controller {
             memoryDirectory: settings.memoryEnabled ? this.memoryDirectory : undefined,
             providerId: settings.openCodeProviderId,
             modelId: modelFor(settings, branch.engine),
+            auth: credentials.env,
+            restricted: credentials.restricted,
             reasoningEffort: reasoningFor(
               settings,
               branch.engine,
@@ -628,6 +772,7 @@ export class Controller {
     if (config.source === 'api') return cleanTitle(await complete(config.api, prompt, signal))
     const executable = locate(config.engine, settings)
     if (!executable || !config.modelId) throw new Error('请先配置标题工具与模型。')
+    const credentials = resolveCredentials(config.engine, settings.credentials[config.engine])
     const timeout = AbortSignal.timeout(30_000)
     const result = await runHarness(
       {
@@ -637,6 +782,8 @@ export class Controller {
         modelId: config.modelId,
         providerId: config.providerId || null,
         fileAccess: false,
+        auth: credentials.env,
+        restricted: credentials.restricted,
         prompt,
       },
       () => {},

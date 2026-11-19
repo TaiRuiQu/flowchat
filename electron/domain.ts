@@ -1,9 +1,15 @@
 import { randomUUID, createHash } from 'node:crypto'
 import path from 'node:path'
 import type { Branch, Conversation, MemoryFile, Settings, Turn } from '../shared/types'
+import type { CredentialSourceId, EngineAuth } from '../shared/types'
 import { modelStamp } from '../shared/types'
 
 export const id = () => randomUUID().replaceAll('-', '')
+export const engineAuth = (source: CredentialSourceId = 'auto'): EngineAuth => ({
+  mode: 'system',
+  source,
+  api: { baseUrl: '', apiKey: '', header: 'bearer', model: '', protocol: 'openai' },
+})
 export const defaults = (): Settings => ({
   version: 2,
   theme: 'System',
@@ -27,6 +33,11 @@ export const defaults = (): Settings => ({
     enabled: false,
     asr: { baseUrl: '', apiKey: '', model: '' },
     tts: { baseUrl: '', apiKey: '', model: '', voice: 'alloy', speed: 1 },
+  },
+  credentials: {
+    ClaudeCode: engineAuth('auto'),
+    Codex: engineAuth('auto'),
+    OpenCode: engineAuth('auto'),
   },
 })
 export function createConversation(

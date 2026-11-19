@@ -12,6 +12,7 @@ import {
 } from '../../electron/domain'
 import { Store } from '../../electron/store'
 import { ClaudeParser, safeError } from '../../electron/harness'
+import { claudeSettingsEnv } from '../../electron/credentials'
 import { Controller } from '../../electron/controller'
 import type { Snapshot, Turn } from '../../shared/types'
 import { modelStamp } from '../../shared/types'
@@ -142,6 +143,33 @@ describe('CLI streaming', () => {
     expect(safeError('api_key=abcdefghijk Bearer secret-token sk-abcdefghijklmnop')).not.toContain(
       'abcdefghijk',
     )
+  })
+  it('forwards the settings env that restricted mode would otherwise skip', async () => {
+    const config = path.join(root, 'claude-config')
+    await fs.mkdir(config, { recursive: true })
+    await fs.writeFile(
+      path.join(config, 'settings.json'),
+      JSON.stringify({
+        env: {
+          ANTHROPIC_AUTH_TOKEN: 'token',
+          ANTHROPIC_BASE_URL: 'https://relay.invalid',
+          RETRIES: 3,
+        },
+      }),
+    )
+    const previous = process.env.CLAUDE_CONFIG_DIR
+    try {
+      process.env.CLAUDE_CONFIG_DIR = config
+      expect(claudeSettingsEnv()).toEqual({
+        ANTHROPIC_AUTH_TOKEN: 'token',
+        ANTHROPIC_BASE_URL: 'https://relay.invalid',
+      })
+      process.env.CLAUDE_CONFIG_DIR = path.join(root, 'absent')
+      expect(claudeSettingsEnv()).toEqual({})
+    } finally {
+      if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR
+      else process.env.CLAUDE_CONFIG_DIR = previous
+    }
   })
   it('runs the Codex JSON-RPC lifecycle through a local mock process', async () => {
     await fs.mkdir(path.join(root, 'harness'), { recursive: true })

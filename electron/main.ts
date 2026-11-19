@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { Controller } from './controller'
 import { Store } from './store'
-import { locate, safeError } from './harness'
+import { locate, safeError, setClientVersion } from './harness'
 import type { Command, Engine } from '../shared/types'
 import { synthesize, transcribe } from './compatible-api'
 import { resolveWorkspace } from './workspace'
@@ -30,6 +30,7 @@ else {
     .whenReady()
     .then(async () => {
       app.setAppUserModelId(appId)
+      setClientVersion(app.getVersion())
       let icon = path.join(
         app.getAppPath(),
         'assets',
@@ -58,6 +59,7 @@ else {
           if (window && !window.isDestroyed()) window.webContents.send(`flowchat:${event}`, value)
         },
       )
+      controller.version = app.getVersion()
       // Loading is done by the renderer so data errors are recoverable inside the window.
       let geometry = { width: 1440, height: 960, maximized: false }
       try {

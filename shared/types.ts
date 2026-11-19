@@ -68,6 +68,40 @@ export interface SpeechSettings {
   asr: CompatibleAPI
   tts: CompatibleAPI & { voice: string; speed: number }
 }
+/** Where a CLI engine takes its credentials from. */
+export type CredentialMode = 'system' | 'custom'
+export type CredentialSourceId = 'auto' | 'settings' | 'environment' | 'cli'
+export interface CredentialAPI {
+  baseUrl: string
+  apiKey: string
+  /** Claude Code only: which HTTP header carries the key. */
+  header: 'bearer' | 'api-key'
+  /** OpenCode only: model id exposed by the FlowChat provider. */
+  model: string
+  /** OpenCode only: wire protocol of the configured endpoint. */
+  protocol: 'openai' | 'anthropic'
+}
+export interface EngineAuth {
+  mode: CredentialMode
+  source: CredentialSourceId
+  api: CredentialAPI
+}
+export type Credentials = Record<Engine, EngineAuth>
+export interface CredentialOption {
+  id: CredentialSourceId
+  label: string
+  detail: string
+  available: boolean
+  /** Keeps the file-tool sandbox that `claude --restricted` provides. */
+  restricted: boolean
+  subscription?: boolean
+}
+export interface CredentialReport {
+  engine: Engine
+  options: CredentialOption[]
+  mode: CredentialMode
+  source: CredentialSourceId
+}
 export interface Settings {
   version: number
   theme: 'System' | 'Light' | 'Dark'
@@ -92,6 +126,7 @@ export interface Settings {
   sidebarWidth?: number
   titleGeneration: TitleSettings
   speech: SpeechSettings
+  credentials: Credentials
 }
 export interface ToolInfo {
   engine: Engine
@@ -103,6 +138,7 @@ export interface MemoryFile {
   modifiedAt: number
 }
 export interface Snapshot {
+  version?: string
   settings: Settings
   entries: Entry[]
   notes: Note[]
@@ -154,8 +190,9 @@ export type Command =
   | { type: 'saveNote'; note: Partial<Note> & { title: string; text: string } }
   | { type: 'deleteNote'; id: string }
   | { type: 'check'; engine: Engine }
+  | { type: 'credentials' | 'verifyAuth'; engine: Engine }
 export interface DesktopAPI {
-  command(command: Command): Promise<Snapshot | Catalog | { message: string }>
+  command(command: Command): Promise<Snapshot | Catalog | CredentialReport | { message: string }>
   onState(callback: (snapshot: Snapshot) => void): () => void
   onStream(callback: (update: StreamUpdate) => void): () => void
   onPrepareClose(callback: () => Promise<void>): () => void

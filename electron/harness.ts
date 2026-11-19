@@ -7,6 +7,10 @@ import { OpenCode } from '@opencode/client'
 import { Service } from '@opencode/client/service'
 import type { Catalog, Engine, Settings, ToolInfo } from '../shared/types'
 
+export let clientVersion = '0.0.0'
+export const setClientVersion = (value: string) => {
+  clientVersion = value
+}
 export interface Request {
   engine: Engine
   executable: string
@@ -18,6 +22,10 @@ export interface Request {
   reasoningEffort?: string
   fileAccess?: boolean
   memoryDirectory?: string
+  /** Credential environment resolved from the user's chosen source. */
+  auth?: Record<string, string>
+  /** `false` drops `--restricted`, which subscription logins and apiKeyHelper need. */
+  restricted?: boolean
 }
 export interface Update {
   text?: string
@@ -121,7 +129,11 @@ function launch(
   }
 }
 
-async function codexCatalog(executable: string, directory: string): Promise<Catalog> {
+async function codexCatalog(
+  executable: string,
+  directory: string,
+  env: Record<string, string> = {},
+): Promise<Catalog> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 30_000)
   const process = launch(
@@ -129,6 +141,7 @@ async function codexCatalog(executable: string, directory: string): Promise<Cata
     ['app-server', '--listen', 'stdio://'],
     directory,
     controller.signal,
+    env,
   )
   const pending = new Map<
     number,
@@ -180,7 +193,7 @@ async function codexCatalog(executable: string, directory: string): Promise<Cata
     })
   try {
     await call('initialize', {
-      clientInfo: { name: 'flowchat', title: 'FlowChat', version: '0.2.0' },
+      clientInfo: { name: 'flowchat', title: 'FlowChat', version: clientVersion },
     })
     write({ method: 'initialized', params: {} })
     const result = await call('model/list', { limit: 100, includeHidden: false })
@@ -216,6 +229,7 @@ export async function runCodex(request: Request, update: (u: Update) => void, si
     ['app-server', '--listen', 'stdio://'],
     request.directory,
     signal,
+    request.auth,
   )
   const pending = new Map<
     number,
@@ -319,7 +333,7 @@ export async function runCodex(request: Request, update: (u: Update) => void, si
     })
   try {
     await call('initialize', {
-      clientInfo: { name: 'flowchat', title: 'FlowChat', version: '0.2.0' },
+      clientInfo: { name: 'flowchat', title: 'FlowChat', version: clientVersion },
     })
     write({ method: 'initialized', params: {} })
     const params = {
@@ -416,6 +430,10 @@ export class ClaudeParser {
     }
   }
 }
+// `--restricted` makes Claude Code ignore user settings files, so credentials must reach the child
+// process as environment variables; the controller resolves them from the source the user picked.
+const claudeLoginFailure =
+  'Claude Code 未登录：请先在终端运行 claude 完成登录，或在 ~/.claude/settings.json 的 env 中配置 ANTHROPIC_AUTH_TOKEN。'
 export async function runClaude(
   request: Request,
   update: (u: Update) => void,
@@ -438,19 +456,17 @@ export async function runClaude(
     '--settings',
     '{"disableAllHooks":true}',
   ]
-  if (request.fileAccess)
+  if (request.fileAccess && request.restricted !== false)
     args.push('--restricted', '--allowedTools', 'Read', 'Edit', 'Write', 'Glob', 'Grep')
+  else if (request.fileAccess) args.push('--allowedTools', 'Read', 'Edit', 'Write', 'Glob', 'Grep')
   if (request.fileAccess && request.memoryDirectory) args.push('--add-dir', request.memoryDirectory)
   if (request.modelId) args.push('--model', request.modelId)
   if (request.reasoningEffort) args.push('--effort', request.reasoningEffort)
   if (request.sessionId) args.push('--resume', request.sessionId)
-  const process = launch(
-      request.executable,
-      args,
-      request.directory,
-      signal,
-      request.reasoningEffort ? { CLAUDE_CODE_EFFORT_LEVEL: request.reasoningEffort } : undefined,
-    ),
+  const process = launch(request.executable, args, request.directory, signal, {
+      ...request.auth,
+      ...(request.reasoningEffort ? { CLAUDE_CODE_EFFORT_LEVEL: request.reasoningEffort } : {}),
+    }),
     parser = new ClaudeParser()
   const exit = new Promise<number | null>((resolve, reject) => {
     process.child.once('error', reject)
@@ -474,8 +490,14 @@ export async function runClaude(
     }
     const code = await exit
     signal.throwIfAborted()
-    if (code !== 0 || parser.error)
-      throw new Error(parser.error || process.diagnostic() || 'Claude Code 请求失败，请检查登录。')
+    if (code !== 0 || parser.error) {
+      const failure = parser.error || process.diagnostic() || 'Claude Code 请求失败，请检查登录。'
+      throw new Error(
+        /not logged in|authentication[_ ]failed|please run \/login/i.test(failure)
+          ? claudeLoginFailure
+          : failure,
+      )
+    }
     if (!parser.completed || !parser.sessionId) throw new Error('Claude Code 未返回完整结果。')
     return { text: parser.text, sessionId: parser.sessionId }
   } finally {
@@ -483,12 +505,19 @@ export async function runClaude(
   }
 }
 
-async function openCode(executable: string) {
-  const endpoint = await Service.ensure({ command: [executable, 'serve', '--service'] })
+async function openCode(executable: string, env: Record<string, string> = {}) {
+  const endpoint = await Service.ensure({
+    command: [executable, 'serve', '--service'],
+    env,
+  })
   return OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) })
 }
-async function openCodeCatalog(executable: string, directory: string): Promise<Catalog> {
-  const client = await openCode(executable),
+async function openCodeCatalog(
+  executable: string,
+  directory: string,
+  env: Record<string, string> = {},
+): Promise<Catalog> {
+  const client = await openCode(executable, env),
     location = { directory }
   const options = { signal: AbortSignal.timeout(30_000) }
   const [providers, models] = await Promise.all([
@@ -527,8 +556,9 @@ export async function catalog(
   engine: Engine,
   executable: string,
   directory: string,
+  env: Record<string, string> = {},
 ): Promise<Catalog> {
-  if (engine === 'Codex') return codexCatalog(executable, directory)
+  if (engine === 'Codex') return codexCatalog(executable, directory, env)
   if (engine === 'ClaudeCode')
     return {
       providers: [],
@@ -559,14 +589,14 @@ export async function catalog(
         },
       ],
     }
-  return openCodeCatalog(executable, directory)
+  return openCodeCatalog(executable, directory, env)
 }
 export async function runOpenCode(
   request: Request,
   update: (u: Update) => void,
   signal: AbortSignal,
 ) {
-  const client = await openCode(request.executable)
+  const client = await openCode(request.executable, request.auth)
   signal.throwIfAborted()
   if (!request.providerId || !request.modelId) throw new Error('请先选择 OpenCode 的供应商和模型。')
   const model = {
@@ -672,9 +702,14 @@ export const runHarness = (request: Request, update: (u: Update) => void, signal
     : request.engine === 'ClaudeCode'
       ? runClaude
       : runOpenCode)(request, update, signal)
-export async function checkTool(engine: Engine, executable: string, directory: string) {
+export async function checkTool(
+  engine: Engine,
+  executable: string,
+  directory: string,
+  env: Record<string, string> = {},
+) {
   if (engine === 'OpenCode') {
-    const result = await openCodeCatalog(executable, directory)
+    const result = await openCodeCatalog(executable, directory, env)
     return result.models.some((m) => m.enabled)
       ? '已连接，可用模型目录已读取。'
       : '工具可用，请先在 OpenCode 配置供应商。'

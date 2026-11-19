@@ -4,8 +4,8 @@ import {
   BookOpen,
   Check,
   ChevronRight,
-  ExternalLink,
   FolderOpen,
+  KeyRound,
   Loader2,
   Monitor,
   Moon,
@@ -23,6 +23,7 @@ import { Markdown } from './components/markdown'
 import { NoteEditor } from './components/note-editor'
 import { MarkdownEditor } from './components/markdown-editor'
 import { IntegrationSettings } from './components/integration-settings'
+import { CredentialDialog, credentialSummary } from './components/credential-settings'
 import { HarnessIcon } from './components/harness-icon'
 import type { Command, Engine, Note, Snapshot } from '../../shared/types'
 import { engineNames } from '../../shared/types'
@@ -359,7 +360,9 @@ function ToolSettings({
   const [editing, setEditing] = useState(false),
     [value, setValue] = useState(state.settings[key] ?? ''),
     [checking, setChecking] = useState(false),
-    [result, setResult] = useState('')
+    [result, setResult] = useState(''),
+    [credentialOpen, setCredentialOpen] = useState(false)
+  const credential = state.settings.credentials[engine]
   return (
     <div className="tool-setting">
       <div className="tool-heading">
@@ -453,19 +456,23 @@ function ToolSettings({
             <ChevronRight size={12} />
           </button>
           <button
-            disabled={!tool.path || state.busy}
-            onClick={() => {
-              void window.flowchat
-                .login(engine)
-                .then(() => toast.info('已启动工具登录，请完成浏览器或工具中的登录流程'))
-                .catch((e) => toast.error(e.message))
-            }}
+            disabled={state.busy}
+            aria-haspopup="dialog"
+            onClick={() => setCredentialOpen(true)}
           >
-            {engine === 'OpenCode' ? '配置供应商' : '登录工具'}
-            <ExternalLink size={12} />
+            登录凭证
+            <KeyRound size={12} />
           </button>
+          <span className="tool-credential">{credentialSummary(credential)}</span>
         </div>
       )}
+      <CredentialDialog
+        engine={engine}
+        open={credentialOpen}
+        onOpenChange={setCredentialOpen}
+        state={state}
+        run={run}
+      />
     </div>
   )
 }
@@ -512,7 +519,7 @@ export function SettingsPage({ state, run }: { state: Snapshot; run: RunCommand 
       <section className="settings-section">
         <div className="settings-section-title">
           <h2>对话工具</h2>
-          <span>使用本机工具的已有登录</span>
+          <span>选择本机已安装的工具与登录方式</span>
         </div>
         {(['Codex', 'ClaudeCode', 'OpenCode'] as Engine[]).map((engine) => (
           <ToolSettings key={engine} engine={engine} state={state} run={run} />
@@ -538,7 +545,9 @@ export function SettingsPage({ state, run }: { state: Snapshot; run: RunCommand 
       </section>
       <footer className="settings-about">
         <span>FlowChat</span>
-        <span>0.2.0 · 用好奇心连接每一次思考</span>
+        <span>
+          {state.version ? state.version + ' · 用好奇心连接每一次思考' : '用好奇心连接每一次思考'}
+        </span>
       </footer>
     </div>
   )
