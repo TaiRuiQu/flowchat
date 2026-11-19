@@ -402,6 +402,10 @@ kbd {
   margin-left: auto;
   flex-shrink: 0;
 }
+.history-item > .history-spinner {
+  margin-left: auto;
+  opacity: 1;
+}
 .history-empty {
   font-size: 14px;
   line-height: 2;

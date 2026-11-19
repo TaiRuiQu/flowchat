@@ -362,6 +362,25 @@ $$
     await view.getByText('当前上下文', { exact: true }).waitFor()
     await view.getByRole('button', { name: '关闭侧面板', exact: true }).click()
     await view.evaluate(() => {
+      const formula = document.querySelector('.answer .katex-display')
+      const range = document.createRange()
+      // Start inside the inline formula's glyphs to cover partial selections.
+      range.setStart(document.querySelector('.answer p .katex-html'), 0)
+      range.setEndAfter(formula)
+      getSelection().removeAllRanges()
+      getSelection().addRange(range)
+    })
+    await view.getByRole('button', { name: '追问选中文字', exact: true }).click()
+    assert.equal(
+      await view
+        .getByText('沿着这段回答，展开新的思路')
+        .locator('xpath=..')
+        .locator('p')
+        .textContent(),
+      '$a^2+b^2=c^2$，以及 $E=mc^2$。\n\n$$\\frac{1}{2}+\\frac{1}{2}=1$$',
+    )
+    await view.getByRole('button', { name: '取消追问', exact: true }).click()
+    await view.evaluate(() => {
       const paragraph = document.querySelector('.answer .markdown p')
       const range = document.createRange()
       range.selectNodeContents(paragraph)
@@ -420,8 +439,10 @@ $$
     await view.waitForFunction(() => document.querySelectorAll('.answer-actions').length === 2)
     await view.locator('#composer').fill('测试停止')
     await view.getByRole('button', { name: '发送问题', exact: true }).click()
+    await view.locator('.history-item.active .history-spinner').waitFor()
     await view.getByRole('button', { name: '停止生成', exact: true }).click()
     await view.getByText('已停止生成，可以重试。', { exact: true }).waitFor()
+    assert.equal(await view.locator('.history-spinner').count(), 0)
     await view.getByRole('button', { name: '设置', exact: true }).click()
     await view.getByRole('button', { name: '深色', exact: true }).click()
     await view.getByRole('button', { name: '搜索对话', exact: true }).click()

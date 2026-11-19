@@ -93,6 +93,32 @@ function dateGroup(date: string) {
   )
   return days === 0 ? '今天' : days === 1 ? '昨天' : days < 7 ? '过去 7 天' : '更早'
 }
+// KaTeX renders each formula twice (hidden MathML + visible HTML), so Selection.toString()
+// returns garbled glyph text; quote formulas by their TeX source instead.
+function selectedText(source: Range) {
+  const katexOf = (node: Node) =>
+    (node instanceof Element ? node : node.parentElement)?.closest('.katex')
+  const range = source.cloneRange()
+  const start = katexOf(range.startContainer),
+    end = katexOf(range.endContainer)
+  if (start) range.setStartBefore(start.closest('.katex-display') ?? start)
+  if (end) range.setEndAfter(end.closest('.katex-display') ?? end)
+  const holder = document.createElement('div')
+  holder.append(range.cloneContents())
+  if (!holder.querySelector('.katex')) return getSelection()?.toString() ?? ''
+  for (const formula of holder.querySelectorAll('.katex')) {
+    const tex = formula.querySelector('annotation[encoding="application/x-tex"]')?.textContent ?? ''
+    const display = formula.parentElement?.classList.contains('katex-display')
+    formula.replaceWith(display ? `$$${tex}$$` : `$${tex}$`)
+  }
+  // innerText needs layout to turn blocks into line breaks, so render the copy off screen.
+  holder.style.cssText = 'position:fixed;left:-99999px;top:0'
+  document.body.append(holder)
+  const text = holder.innerText
+  holder.remove()
+  return text
+}
+
 function branchDepth(branch: Branch, branches: Branch[]) {
   let depth = 0,
     current = branch
@@ -447,7 +473,7 @@ export default function App() {
   }
   const captureSelection = useCallback(() => {
     const selected = window.getSelection(),
-      text = selected?.toString().trim()
+      text = (selected?.rangeCount ? selectedText(selected.getRangeAt(0)) : '').trim()
     const node = selected?.anchorNode
     const element = node instanceof Element ? node : node?.parentElement
     const answer = element?.closest('.answer')
@@ -620,7 +646,11 @@ export default function App() {
                 >
                   <MessageCircle size={15} />
                   <span>{entry.title}</span>
-                  {page === 'chat' && entry.id === chat.id && <span className="active-dot" />}
+                  {entry.id === chat.id && busy ? (
+                    <Loader2 className="spin history-spinner" size={13} aria-label="正在生成" />
+                  ) : (
+                    page === 'chat' && entry.id === chat.id && <span className="active-dot" />
+                  )}
                 </button>
               ))}
             </div>
