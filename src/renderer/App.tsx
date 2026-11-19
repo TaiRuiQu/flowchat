@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent,
+} from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import {
   Archive,
@@ -50,6 +57,14 @@ import { availableModels, reasoningFor, reasoningKey } from '../../shared/models
 
 type Page = 'chat' | 'notes' | 'memory' | 'settings'
 type Quote = { turnId: string; quote: string }
+function updateStarterSpotlight(event: PointerEvent<HTMLButtonElement>) {
+  if (event.pointerType === 'touch') return
+  const card = event.currentTarget
+  const bounds = card.getBoundingClientRect()
+  // Keep pointer tracking outside React state so moving the light never rerenders the chat.
+  card.style.setProperty('--spotlight-x', `${event.clientX - bounds.left}px`)
+  card.style.setProperty('--spotlight-y', `${event.clientY - bounds.top}px`)
+}
 function Logo({ small = false }: { small?: boolean }) {
   return (
     <span className={cn('brand-mark', small && 'small')} aria-hidden="true">
@@ -1173,6 +1188,8 @@ export default function App() {
                         <button
                           key={title}
                           className="starter-card"
+                          onPointerEnter={updateStarterSpotlight}
+                          onPointerMove={updateStarterSpotlight}
                           onClick={() => {
                             setDraft(prompt)
                             composer.current?.focus()
