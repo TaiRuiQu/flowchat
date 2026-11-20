@@ -501,6 +501,14 @@ describe('agent workflow', () => {
       type: 'workspaceWrite',
       writableRoots: [path.join(root, 'harness'), path.join(root, 'memory')],
     })
+    // Codex 0.17x 拒绝 workspaceWrite.readOnlyAccess，触碰即整个 turn/start 失败。
+    expect(Object.keys(turns[0].params.sandboxPolicy).sort()).toEqual([
+      'excludeSlashTmp',
+      'excludeTmpdirEnvVar',
+      'networkAccess',
+      'type',
+      'writableRoots',
+    ])
     expect(turns[0].params.input[0].text).toContain(
       JSON.stringify(path.join(root, 'memory', 'memory.md')),
     )

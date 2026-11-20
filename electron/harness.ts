@@ -352,6 +352,7 @@ export async function runCodex(request: Request, update: (u: Update) => void, si
       threadId: sessionId,
       input: [{ type: 'text', text: request.prompt }],
       approvalPolicy: 'never',
+      // Codex 0.17x dropped workspaceWrite.readOnlyAccess; sending it fails the whole turn/start.
       sandboxPolicy: request.fileAccess
         ? {
             type: 'workspaceWrite',
@@ -361,16 +362,6 @@ export async function runCodex(request: Request, update: (u: Update) => void, si
                 ...(request.memoryDirectory ? [request.memoryDirectory] : []),
               ]),
             ],
-            readOnlyAccess: {
-              type: 'restricted',
-              includePlatformDefaults: true,
-              readableRoots: [
-                ...new Set([
-                  request.directory,
-                  ...(request.memoryDirectory ? [request.memoryDirectory] : []),
-                ]),
-              ],
-            },
             networkAccess: false,
             excludeTmpdirEnvVar: true,
             excludeSlashTmp: true,
